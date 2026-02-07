@@ -1,0 +1,65 @@
+{
+  "name": "@prodbeam/claude-mcp",
+  "version": "0.1.0",
+  "description": "AI-powered daily standups, weekly reports, and sprint retrospectives for Claude Code",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "prodbeam-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "claude-code",
+    "mcp",
+    "standup",
+    "reports",
+    "retrospective",
+    "ai",
+    "scrum",
+    "agile",
+    "github",
+    "jira",
+    "developer-tools"
+  ],
+  "author": "Prodbeam Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prodbeam/claude-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/prodbeam/claude-mcp/issues"
+  },
+  "homepage": "https://prodbeam.com/claude-plugin",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "clipboardy": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "prettier": "^3.2.4",
+    "typescript": "^5.3.3"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
