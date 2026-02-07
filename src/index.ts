@@ -15,6 +15,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { GitHubMCPAdapter } from './adapters/github-mcp.js';
+import type { GitHubCommit, GitHubPullRequest, GitHubReview } from './types/github.js';
 
 /**
  * MCP Server instance
@@ -100,13 +102,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleDailyReport();
 
       case 'generate_weekly_report':
-        return await handleWeeklyReport(args?.team as boolean);
+        return await handleWeeklyReport(args?.['team'] as boolean);
 
       case 'generate_retrospective':
         return await handleRetrospective(
-          args?.sprint as string,
-          args?.from as string,
-          args?.to as string
+          args?.['sprint'] as string,
+          args?.['from'] as string,
+          args?.['to'] as string
         );
 
       default:
@@ -130,33 +132,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
  * Generate daily standup report
  */
 async function handleDailyReport() {
-  // TODO: Phase 1 implementation
-  // 1. Connect to GitHub MCP
-  // 2. Fetch commits from last 24h
-  // 3. Fetch PRs from last 24h
-  // 4. Fetch reviews from last 24h
-  // 5. Connect to Jira MCP (if available)
-  // 6. Fetch Jira issues from last 24h
-  // 7. Generate AI report with Anthropic Claude
-  // 8. Return formatted report
+  const github = new GitHubMCPAdapter();
 
-  return {
-    content: [
-      {
-        type: 'text',
-        text: `# Daily Standup - ${new Date().toLocaleDateString()}
+  try {
+    // Step 1: Connect to GitHub MCP
+    await github.connect();
 
-🚧 **Coming Soon!**
+    // Step 2: Fetch activity from last 24 hours
+    const activity = await github.fetchActivity(24);
 
-This feature is under development. Expected completion: February 2026.
+    // Step 3: Format the activity data
+    const { commits, pullRequests, reviews } = activity;
 
-For now, you can:
-1. Star the repo: https://github.com/prodbeam/claude-mcp
-2. Email beta@prodbeam.com for early access
-3. Follow progress at https://prodbeam.com/claude-plugin`,
-      },
-    ],
-  };
+    // Step 4: Build report (AI generation coming in next phase)
+    const report = `# Daily Standup - ${new Date().toLocaleDateString()}
+
+## GitHub Activity (Last 24 Hours)
+
+### Commits: ${commits.length}
+${commits.length > 0 ? commits.map((c: GitHubCommit) => `- ${c.message} (${c.repo})`).join('\n') : '_No commits_'}
+
+### Pull Requests: ${pullRequests.length}
+${pullRequests.length > 0 ? pullRequests.map((pr: GitHubPullRequest) => `- #${pr.number}: ${pr.title} [${pr.state}]`).join('\n') : '_No pull requests_'}
+
+### Reviews: ${reviews.length}
+${reviews.length > 0 ? reviews.map((r: GitHubReview) => `- PR #${r.pullRequest}: ${r.state}`).join('\n') : '_No reviews_'}
+
+---
+
+**Note:** AI-powered summary generation coming soon!
+
+📊 Raw activity fetched successfully from GitHub MCP
+🔗 Repository: https://github.com/prodbeam/claude-mcp`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: report,
+        },
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    // Fallback message if GitHub MCP is not available
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `# Daily Standup - ${new Date().toLocaleDateString()}
+
+⚠️ **GitHub MCP Connection Issue**
+
+Error: ${errorMessage}
+
+**Setup Required:**
+1. Ensure GitHub MCP server is configured in your Claude Code settings
+2. Run: \`npx @modelcontextprotocol/server-github\` to verify installation
+
+For more info: https://github.com/prodbeam/claude-mcp`,
+        },
+      ],
+    };
+  } finally {
+    // Clean up connection
+    await github.disconnect();
+  }
 }
 
 /**
