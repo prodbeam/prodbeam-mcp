@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -47,3 +46,7 @@ temp/
 
 # MCP specific
 .mcp/
+
+# Claude Code auto-generated context files
+**/CLAUDE.md
+.claude/

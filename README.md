@@ -1,4 +1,4 @@
-# 🚧 Prodbeam for Claude Code
+# Prodbeam for Claude Code
 
 **Status:** Work in Progress (Pre-release)
 **Target Launch:** March 2026
@@ -7,133 +7,197 @@
 
 ## What is this?
 
-An AI-powered MCP server for Claude Code that generates:
-- 📊 **Daily standups** from your commits, PRs, and Jira tickets
-- 📈 **Weekly reports** with team metrics and insights
-- 🔄 **Sprint retrospectives** with AI-powered analysis
+An MCP server for Claude Code that generates AI-powered engineering reports directly from your terminal:
 
-All directly from your terminal. No browser. No context switching.
+- **Daily standups** from your commits, PRs, and Jira tickets
+- **Weekly reports** with team metrics and insights
+- **Sprint retrospectives** with AI-powered analysis
+
+No browser. No context switching. Reuses your existing GitHub and Jira MCP connections.
 
 ---
 
-## Example Usage (Coming Soon)
+## How It Works
+
+Prodbeam orchestrates your existing MCP servers. It spawns GitHub and Jira MCP servers as subprocesses using the same tokens you already have configured:
+
+```
+Claude Code
+  |
+  +-- Prodbeam MCP (this plugin)
+        |
+        +-- GitHub MCP (your token, spawned as subprocess)
+        +-- Jira MCP (your token, spawned as subprocess)
+        +-- Anthropic Claude API (for AI generation)
+```
+
+No duplicate authentication. No new OAuth flows.
+
+---
+
+## Installation
+
+### Prerequisites
+
+- [Claude Code CLI](https://claude.ai/code) installed
+- A GitHub Personal Access Token ([create one](https://github.com/settings/tokens))
+- Optionally: Jira API Token ([create one](https://id.atlassian.com/manage/api-tokens))
+
+### Setup
+
+Add to your `.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "prodbeam": {
+      "command": "npx",
+      "args": ["-y", "@prodbeam/claude-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<your-github-token>",
+        "ANTHROPIC_API_KEY": "<your-anthropic-key>"
+      }
+    }
+  }
+}
+```
+
+**Optional Jira integration** - add these env vars to the same block:
+
+```json
+{
+  "JIRA_API_TOKEN": "<your-jira-token>",
+  "JIRA_EMAIL": "<your-jira-email>",
+  "JIRA_URL": "https://<company>.atlassian.net"
+}
+```
+
+### Already have GitHub/Jira MCP servers?
+
+Use the same tokens. If you have this in your config:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_abc123" }
+    }
+  }
+}
+```
+
+Just copy that same token to the Prodbeam config. No new tokens needed.
+
+### Not sure what you need?
+
+Run the setup check after installing:
+
+```
+claude> use the setup_check tool
+```
+
+Prodbeam will detect which integrations are configured and provide step-by-step instructions for anything missing.
+
+---
+
+## Usage (Coming Soon)
 
 ```bash
-# Daily standup in 10 seconds
-$ claude /daily-report
-✓ Generated standup from your last 24h activity
+# Daily standup
+$ claude
+> use generate_daily_report
 
 # Weekly team summary
-$ claude /weekly-report --team
-✓ Generated team summary with metrics
+> use generate_weekly_report with team=true
 
 # Sprint retrospective
-$ claude /retro --sprint "Sprint 42"
-✓ Generated retrospective with insights
+> use generate_retrospective with sprint="Sprint 42"
 ```
 
 ---
 
 ## Features
 
-- ✅ **Terminal-native** - Works directly in Claude Code CLI
-- ✅ **Reuses existing MCPs** - No duplicate GitHub/Jira authentication
-- ✅ **AI-powered** - Uses Anthropic Claude for natural language generation
-- ✅ **Team-focused** - Built for agile scrum teams
-- ✅ **Open source** - MIT license
-
----
-
-## Architecture
-
-Prodbeam MCP orchestrates your existing GitHub and Jira MCP servers:
-
-```
-PRODBEAM MCP → GitHub MCP (your existing connection)
-              → Jira MCP (your existing connection)
-              → Anthropic Claude API (for AI generation)
-```
-
-No duplicate authentication needed!
-
----
-
-## Installation (Not Ready Yet)
-
-Once released, installation will be:
-
-```bash
-# Add to your .claude/mcp.json
-{
-  "mcpServers": {
-    "prodbeam": {
-      "command": "npx",
-      "args": ["-y", "@prodbeam/claude-mcp"]
-    }
-  }
-}
-
-# Run setup
-$ claude /prodbeam setup
-```
-
-**Prerequisites:**
-- GitHub MCP server configured
-- Jira MCP server configured (optional)
-- Claude Code CLI installed
+- **Terminal-native** - Works directly in Claude Code CLI
+- **Reuses existing tokens** - Same GitHub/Jira tokens you already have
+- **AI-powered** - Uses Anthropic Claude for natural language reports
+- **Graceful fallback** - Works with GitHub only, Jira is optional
+- **Setup guidance** - Built-in diagnostics if configuration is missing
+- **Open source** - MIT license
 
 ---
 
 ## Roadmap
 
+- [ ] **Phase 0** (Feb 2026): Foundation and architecture validation
 - [ ] **Phase 1** (Feb-Mar 2026): Daily reports MVP
-- [ ] **Phase 2** (Mar 2026): Weekly reports
+- [ ] **Phase 2** (Mar 2026): Weekly reports with team support
 - [ ] **Phase 3** (Mar 2026): Sprint retrospectives
-- [ ] **Launch** (Mar 2026): v1.0 public release
+- [ ] **v1.0 Launch** (Apr 2026): Public release
 
 ---
 
-## Early Access
+## Development
 
-Want to try it before launch?
+```bash
+# Install dependencies
+npm install
 
-- ⭐ **Star this repo** to get notified when we launch
-- 📧 **Email beta@prodbeam.com** for early access
-- 🐦 **Follow [@prodbeam](https://twitter.com/prodbeam)** for updates
+# Build
+npm run build
 
----
+# Watch mode
+npm run dev
 
-## Why Prodbeam?
+# Lint
+npm run lint
 
-Part of the [Prodbeam](https://prodbeam.com) ecosystem - the AI Scrum Master platform for engineering teams.
+# Type check
+npm run type-check
+```
 
-- **Web App**: Full engineering intelligence platform
-- **Claude Plugin**: Terminal-native reports (this repo)
+### Project Structure
+
+```
+src/
+├── index.ts              # MCP server entry point
+├── adapters/
+│   └── github-mcp.ts     # GitHub MCP client adapter
+└── types/
+    └── github.ts          # TypeScript type definitions
+```
 
 ---
 
 ## Contributing
 
-Not accepting contributions yet (pre-release). Once launched, we'll welcome:
+Not accepting contributions yet (pre-release). Once launched, we welcome:
 - Bug reports
 - Feature requests
 - Pull requests
 - Documentation improvements
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## Part of the Prodbeam Ecosystem
+
+[Prodbeam](https://prodbeam.com) is an AI-powered Engineering Intelligence Platform.
+
+- **Web App**: Full engineering intelligence platform at [prodbeam.com](https://prodbeam.com)
+- **Claude Code Plugin**: Terminal-native reports (this repo)
+
 ---
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file
+MIT License - See [LICENSE](LICENSE) file.
 
 ---
 
 ## Links
 
-- 🌐 **Website**: [prodbeam.com](https://prodbeam.com)
-- 📖 **Docs**: [prodbeam.com/claude-plugin](https://prodbeam.com/claude-plugin) (coming soon)
-- 💬 **Support**: [GitHub Issues](https://github.com/prodbeam/claude-mcp/issues)
-
----
-
-**Built with ❤️ by the Prodbeam team**
+- Website: [prodbeam.com](https://prodbeam.com)
+- Docs: [prodbeam.com/claude-plugin](https://prodbeam.com/claude-plugin) (coming soon)
+- Issues: [GitHub Issues](https://github.com/prodbeam/claude-mcp/issues)

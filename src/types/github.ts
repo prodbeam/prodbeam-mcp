@@ -21,18 +21,21 @@ export interface GitHubPullRequest {
   mergedAt?: string;
   repo: string;
   url: string;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface GitHubReview {
-  id: number;
-  pullRequest: number;
+  pullRequestNumber: number;
+  pullRequestTitle: string;
   author: string;
-  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED';
+  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'PENDING';
   submittedAt: string;
   repo: string;
 }
 
 export interface GitHubActivity {
+  username: string;
   commits: GitHubCommit[];
   pullRequests: GitHubPullRequest[];
   reviews: GitHubReview[];
@@ -40,4 +43,15 @@ export interface GitHubActivity {
     from: string;
     to: string;
   };
+}
+
+/**
+ * MCP tool response shape - content array with typed items
+ */
+export interface MCPToolResponse {
+  content: Array<{
+    type: string;
+    text?: string;
+  }>;
+  isError?: boolean;
 }
