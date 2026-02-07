@@ -47,3 +47,7 @@ temp/
 
 # MCP specific
 .mcp/
+
+# Claude Code auto-generated context files
+**/CLAUDE.md
+.claude/
