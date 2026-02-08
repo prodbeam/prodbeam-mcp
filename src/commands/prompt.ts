@@ -26,15 +26,11 @@ export interface AskOptions {
  * Ask a question and return the trimmed answer.
  * Loops until a valid, non-empty answer is given when required.
  */
-export async function ask(
-  rl: Interface,
-  question: string,
-  opts: AskOptions = {}
-): Promise<string> {
+export async function ask(rl: Interface, question: string, opts: AskOptions = {}): Promise<string> {
   const { required = false, defaultValue, validate } = opts;
   const suffix = defaultValue ? ` [${defaultValue}]` : '';
 
-  while (true) {
+  for (;;) {
     const raw = await rl.question(`${question}${suffix}: `);
     const value = raw.trim() || defaultValue || '';
 
@@ -67,7 +63,7 @@ export async function askSecret(rl: Interface, question: string): Promise<string
 
     if (!stdin.isTTY) {
       // Non-interactive: fall back to regular readline
-      rl.question('').then((answer) => resolve(answer.trim()));
+      void rl.question('').then((answer) => resolve(answer.trim()));
       return;
     }
 
@@ -117,7 +113,7 @@ export async function askSecret(rl: Interface, question: string): Promise<string
  * Validates each email has an @ sign.
  */
 export async function askEmails(rl: Interface, question: string): Promise<string[]> {
-  while (true) {
+  for (;;) {
     const raw = await rl.question(`${question}: `);
     const emails = raw
       .split(',')
@@ -142,7 +138,11 @@ export async function askEmails(rl: Interface, question: string): Promise<string
 /**
  * Ask a yes/no question. Returns true for yes.
  */
-export async function askConfirm(rl: Interface, question: string, defaultYes = true): Promise<boolean> {
+export async function askConfirm(
+  rl: Interface,
+  question: string,
+  defaultYes = true
+): Promise<boolean> {
   const hint = defaultYes ? '[Y/n]' : '[y/N]';
   const raw = await rl.question(`${question} ${hint}: `);
   const answer = raw.trim().toLowerCase();

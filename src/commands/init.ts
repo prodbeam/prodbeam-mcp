@@ -17,7 +17,11 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Interface } from 'node:readline/promises';
 
-import { resolveGitHubCredentials, resolveJiraCredentials, mergeCredentials } from '../config/credentials.js';
+import {
+  resolveGitHubCredentials,
+  resolveJiraCredentials,
+  mergeCredentials,
+} from '../config/credentials.js';
 import { teamConfigExists, writeTeamConfig, createDefaultConfig } from '../config/team-config.js';
 import { resolveConfigDir } from '../config/paths.js';
 import { GitHubClient, GitHubClientError } from '../clients/github-client.js';
@@ -66,11 +70,7 @@ export async function runInit(): Promise<void> {
     // Step 4: Team setup
     printStep(4, TOTAL_STEPS, 'Team setup');
     if (teamConfigExists()) {
-      const overwrite = await askConfirm(
-        rl,
-        'Team config already exists. Overwrite?',
-        false
-      );
+      const overwrite = await askConfirm(rl, 'Team config already exists. Overwrite?', false);
       if (!overwrite) {
         printInfo('Keeping existing team config.');
         rl.close();
@@ -136,7 +136,7 @@ async function askTeamMembers(
   const members: TeamMemberInput[] = [];
   let memberNum = 1;
 
-  while (true) {
+  for (;;) {
     const isFirst = memberNum === 1;
     const ghDefault = isFirst ? ghUser.login : undefined;
 
@@ -190,7 +190,9 @@ function scanMcpConfigEnvVars(): McpEnvVars {
 
   try {
     const raw = readFileSync(configPath, 'utf-8');
-    const config = JSON.parse(raw) as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+    const config = JSON.parse(raw) as {
+      mcpServers?: Record<string, { env?: Record<string, string> }>;
+    };
 
     if (!config.mcpServers || typeof config.mcpServers !== 'object') {
       return {};
@@ -298,7 +300,8 @@ async function resolveOrPromptJira(rl: Interface): Promise<ResolvedCreds<JiraCre
   const host = await ask(rl, 'Jira Cloud hostname (e.g., company.atlassian.net)', {
     required: true,
     defaultValue: mcpHost,
-    validate: (v) => (v.includes('.') ? null : 'Must be a valid hostname (e.g., company.atlassian.net)'),
+    validate: (v) =>
+      v.includes('.') ? null : 'Must be a valid hostname (e.g., company.atlassian.net)',
   });
   const email = await ask(rl, 'Jira account email', {
     required: true,
@@ -367,9 +370,14 @@ async function validateJira(
       printSuccess(`Jira: authenticated as ${user.displayName}`);
       return user;
     } catch (error) {
-      if (error instanceof JiraClientError && (error.statusCode === 401 || error.statusCode === 403)) {
+      if (
+        error instanceof JiraClientError &&
+        (error.statusCode === 401 || error.statusCode === 403)
+      ) {
         if (source !== 'prompt' || attempt >= MAX_AUTH_RETRIES) {
-          throw new Error(`Jira authentication failed (${error.statusCode}). Check your credentials.`);
+          throw new Error(
+            `Jira authentication failed (${error.statusCode}). Check your credentials.`
+          );
         }
         printWarning(`Invalid credentials (attempt ${attempt}/${MAX_AUTH_RETRIES}). Try again.`);
         const host = await ask(rl, 'Jira Cloud hostname', {
@@ -433,7 +441,9 @@ async function runDiscovery(
   const [ghRepoResults, jiraDiscovery] = await Promise.all([
     discoverGitHubReposAndOrgs(ghClient, usernames),
     discoverJiraTeam(jiraClient, emails, jiraCreds.host).catch((error) => {
-      printWarning(`Jira discovery failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      printWarning(
+        `Jira discovery failed: ${error instanceof Error ? error.message : 'unknown error'}`
+      );
       return null;
     }),
   ]);
@@ -519,14 +529,20 @@ function registerMcpServer(ghCreds: GitHubCredentials, jiraCreds: JiraCredential
 
   // Build args with -e flags so credentials are persisted in the MCP config
   const args = [
-    'mcp', 'add',
+    'mcp',
+    'add',
     'prodbeam',
-    '-e', `GITHUB_TOKEN=${ghCreds.token}`,
-    '-e', `JIRA_HOST=${jiraCreds.host}`,
-    '-e', `JIRA_EMAIL=${jiraCreds.email}`,
-    '-e', `JIRA_API_TOKEN=${jiraCreds.apiToken}`,
+    '-e',
+    `GITHUB_TOKEN=${ghCreds.token}`,
+    '-e',
+    `JIRA_HOST=${jiraCreds.host}`,
+    '-e',
+    `JIRA_EMAIL=${jiraCreds.email}`,
+    '-e',
+    `JIRA_API_TOKEN=${jiraCreds.apiToken}`,
     '--',
-    'node', serverPath,
+    'node',
+    serverPath,
   ];
 
   // Resolve claude CLI path — may not be on default PATH
