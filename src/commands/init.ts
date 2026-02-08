@@ -595,19 +595,20 @@ function resolveClaudeCli(): string | null {
 
 function printManualMcpInstructions(
   serverPath: string,
-  ghCreds: GitHubCredentials,
+  _ghCreds: GitHubCredentials,
   jiraCreds: JiraCredentials
 ): void {
   printInfo('Register manually by running:\n');
   const cmd = [
     'claude mcp add prodbeam',
-    `  -e GITHUB_TOKEN=${ghCreds.token}`,
+    '  -e GITHUB_TOKEN=<your-github-token>',
     `  -e JIRA_HOST=${jiraCreds.host}`,
     `  -e JIRA_EMAIL=${jiraCreds.email}`,
-    `  -e JIRA_API_TOKEN=${jiraCreds.apiToken}`,
+    '  -e JIRA_API_TOKEN=<your-jira-api-token>',
     `  -- node ${serverPath}`,
   ].join(' \\\n');
   console.log(`  ${cmd}\n`);
+  printInfo('Replace <your-github-token> and <your-jira-api-token> with your actual tokens.');
 }
 
 // ─── Summary ─────────────────────────────────────────────────
