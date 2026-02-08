@@ -1,10 +1,11 @@
 {
   "name": "@prodbeam/mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP server for AI-powered engineering intelligence — standups, weekly reports, and sprint retrospectives",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
+    "mcp": "./dist/index.js",
     "prodbeam-mcp": "./dist/index.js",
     "prodbeam": "./dist/cli.js"
   },
