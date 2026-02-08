@@ -1,0 +1,26 @@
+# PR size labels based on lines changed
+size/XS:
+  - changed-files:
+      - any-glob-to-any-file: '**/*'
+        all-globs-to-all-files: '!package-lock.json'
+    head-branch: ['.*']
+
+size/S:
+  - changed-files:
+      - any-glob-to-any-file: '**/*'
+        all-globs-to-all-files: '!package-lock.json'
+
+size/M:
+  - changed-files:
+      - any-glob-to-any-file: '**/*'
+        all-globs-to-all-files: '!package-lock.json'
+
+size/L:
+  - changed-files:
+      - any-glob-to-any-file: '**/*'
+        all-globs-to-all-files: '!package-lock.json'
+
+size/XL:
+  - changed-files:
+      - any-glob-to-any-file: '**/*'
+        all-globs-to-all-files: '!package-lock.json'
