@@ -44,14 +44,3 @@ export interface GitHubActivity {
     to: string;
   };
 }
-
-/**
- * MCP tool response shape - content array with typed items
- */
-export interface MCPToolResponse {
-  content: Array<{
-    type: string;
-    text?: string;
-  }>;
-  isError?: boolean;
-}

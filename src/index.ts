@@ -1,132 +1,215 @@
 #!/usr/bin/env node
 
 /**
- * Prodbeam MCP Server for Claude Code
+ * Prodbeam MCP Server v2
  *
- * Orchestrates GitHub and Jira MCP servers to generate AI-powered reports:
- * - Daily standups
- * - Weekly summaries
- * - Sprint retrospectives
+ * Self-sufficient engineering intelligence server.
+ * Fetches its own data from GitHub and Jira APIs.
+ * Requires one-time setup: team name + member emails.
+ *
+ * Tools:
+ *   Setup:   setup_team, add_member, remove_member, refresh_config
+ *   Reports: standup, team_standup, weekly_summary, sprint_retro
+ *   Info:    get_capabilities
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { GitHubMCPAdapter } from './adapters/github-mcp.js';
-import { JiraMCPAdapter } from './adapters/jira-mcp.js';
+
+import { resolveGitHubCredentials, resolveJiraCredentials } from './config/credentials.js';
+import {
+  readTeamConfig,
+  writeTeamConfig,
+  teamConfigExists,
+  createDefaultConfig,
+} from './config/team-config.js';
+import { resolveConfigDir } from './config/paths.js';
+import { GitHubClient } from './clients/github-client.js';
+import { JiraClient } from './clients/jira-client.js';
+import { discoverGitHubTeam } from './discovery/github-discovery.js';
+import { discoverJiraTeam } from './discovery/jira-discovery.js';
+import {
+  fetchGitHubActivityForUser,
+  fetchTeamGitHubActivity,
+  fetchJiraActivityForUser,
+  fetchTeamJiraActivity,
+  fetchSprintJiraActivity,
+  detectActiveSprint,
+} from './orchestrator/data-fetcher.js';
+import { dailyTimeRange, weeklyTimeRange, sprintTimeRange } from './orchestrator/time-range.js';
 import {
   generateDailyReport,
+  generateTeamDailyReport,
   generateWeeklyReport,
   generateRetrospective,
-  isAIConfigured,
 } from './generators/report-generator.js';
+import { HistoryStore } from './history/history-store.js';
+import { buildSnapshot } from './history/snapshot-builder.js';
+import { analyzeTrends } from './insights/trend-analyzer.js';
+import { detectAnomalies } from './insights/anomaly-detector.js';
+import { assessTeamHealth } from './insights/team-health.js';
+import { resolveThresholds } from './config/thresholds.js';
+import type { ReportExtras } from './generators/report-generator.js';
+import type { MemberConfig, TeamConfig } from './config/types.js';
 
-const server = new Server(
-  { name: 'prodbeam-mcp', version: '0.1.0' },
-  { capabilities: { tools: {} } }
-);
+const server = new Server({ name: 'prodbeam', version: '2.0.0' }, { capabilities: { tools: {} } });
 
-/**
- * Register available tools
- */
+// ─── Tool Definitions ────────────────────────────────────────
+
 server.setRequestHandler(ListToolsRequestSchema, () => {
   return {
     tools: [
+      // Setup tools
       {
-        name: 'generate_daily_report',
+        name: 'setup_team',
         description:
-          'Generate a daily standup report from the last 24 hours of GitHub activity (commits, PRs, reviews) and Jira issues',
+          'One-time team setup. Provide team name and member emails — prodbeam auto-discovers GitHub usernames, Jira accounts, active repos, projects, and sprints.',
         inputSchema: {
           type: 'object' as const,
           properties: {
-            hours: {
-              type: 'number',
-              description: 'Number of hours to look back (default: 24)',
-              default: 24,
+            teamName: {
+              type: 'string' as const,
+              description: 'Team name (e.g., "Platform Engineering")',
+            },
+            emails: {
+              type: 'array' as const,
+              items: { type: 'string' as const },
+              description: 'Email addresses of team members',
             },
           },
-          required: [],
+          required: ['teamName', 'emails'],
         },
       },
       {
-        name: 'generate_weekly_report',
-        description: 'Generate a weekly summary report with metrics and insights',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            team: {
-              type: 'boolean',
-              description: 'Generate team-wide report (true) or personal report (false)',
-              default: false,
-            },
-          },
-          required: [],
-        },
-      },
-      {
-        name: 'generate_retrospective',
-        description: 'Generate a sprint retrospective report with AI-powered analysis',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            sprint: {
-              type: 'string',
-              description: 'Sprint name (e.g., "Sprint 42")',
-            },
-            from: {
-              type: 'string',
-              description: 'Start date (YYYY-MM-DD)',
-            },
-            to: {
-              type: 'string',
-              description: 'End date (YYYY-MM-DD)',
-            },
-          },
-          required: [],
-        },
-      },
-      {
-        name: 'setup_check',
+        name: 'add_member',
         description:
-          'Check which integrations are configured and provide setup instructions for missing ones',
+          'Add a new member to the team. Provide their email — prodbeam auto-discovers their GitHub and Jira identities.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            email: {
+              type: 'string' as const,
+              description: 'Email address of the new team member',
+            },
+          },
+          required: ['email'],
+        },
+      },
+      {
+        name: 'remove_member',
+        description: 'Remove a member from the team by email address.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            email: {
+              type: 'string' as const,
+              description: 'Email address of the member to remove',
+            },
+          },
+          required: ['email'],
+        },
+      },
+      {
+        name: 'refresh_config',
+        description:
+          'Re-scan repos and sprints for existing team members. Updates team config with newly discovered repos and current sprint info.',
         inputSchema: {
           type: 'object' as const,
           properties: {},
-          required: [],
+        },
+      },
+      // Report tools
+      {
+        name: 'standup',
+        description:
+          'Generate a personal daily standup report. Fetches your GitHub commits, PRs, reviews, and Jira issues from the last 24 hours. Requires team setup.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            email: {
+              type: 'string' as const,
+              description:
+                'Email of the team member (optional — defaults to first member in config)',
+            },
+          },
+        },
+      },
+      {
+        name: 'team_standup',
+        description:
+          'Generate a full team standup report. Shows per-member activity from the last 24 hours with aggregate stats.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {},
+        },
+      },
+      {
+        name: 'weekly_summary',
+        description:
+          'Generate a weekly engineering summary with metrics, repo breakdown, and Jira stats. Covers the last 7 days by default.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            weeksAgo: {
+              type: 'number' as const,
+              description: 'Offset in weeks (0 = current week, 1 = last week, etc.)',
+            },
+          },
+        },
+      },
+      {
+        name: 'sprint_retro',
+        description:
+          'Generate a sprint retrospective report with merge time analysis, completion rates, and Jira metrics. Auto-detects the active sprint from Jira.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            sprintName: {
+              type: 'string' as const,
+              description: 'Sprint name (optional — auto-detects active sprint if not provided)',
+            },
+          },
+        },
+      },
+      // Info
+      {
+        name: 'get_capabilities',
+        description: 'Returns available tools, current team config status, and credential status.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {},
         },
       },
     ],
   };
 });
 
-/**
- * Handle tool calls
- */
+// ─── Tool Handlers ───────────────────────────────────────────
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
     switch (name) {
-      case 'generate_daily_report': {
-        const hours = typeof args?.['hours'] === 'number' ? args['hours'] : 24;
-        return await handleDailyReport(hours);
-      }
-
-      case 'generate_weekly_report': {
-        const team = typeof args?.['team'] === 'boolean' ? args['team'] : false;
-        return await handleWeeklyReport(team);
-      }
-
-      case 'generate_retrospective': {
-        const sprint = typeof args?.['sprint'] === 'string' ? args['sprint'] : undefined;
-        const from = typeof args?.['from'] === 'string' ? args['from'] : undefined;
-        const to = typeof args?.['to'] === 'string' ? args['to'] : undefined;
-        return await handleRetrospective(sprint, from, to);
-      }
-
-      case 'setup_check':
-        return handleSetupCheck();
-
+      case 'setup_team':
+        return await handleSetupTeam(args);
+      case 'add_member':
+        return await handleAddMember(args);
+      case 'remove_member':
+        return handleRemoveMember(args);
+      case 'refresh_config':
+        return await handleRefreshConfig();
+      case 'standup':
+        return await handleStandup(args);
+      case 'team_standup':
+        return await handleTeamStandup();
+      case 'weekly_summary':
+        return await handleWeeklySummary(args);
+      case 'sprint_retro':
+        return await handleSprintRetro(args);
+      case 'get_capabilities':
+        return handleGetCapabilities();
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -139,346 +222,925 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-/**
- * Generate daily standup report
- */
-async function handleDailyReport(hours: number) {
-  // Check if GitHub is configured
-  if (!GitHubMCPAdapter.isConfigured()) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: buildSetupInstructions(
-            'GitHub is not configured. Run the setup_check tool for instructions.'
-          ),
-        },
-      ],
-    };
+// ─── Setup Team ──────────────────────────────────────────────
+
+async function handleSetupTeam(
+  args: Record<string, unknown> | undefined
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const teamName = args?.['teamName'];
+  const emails = args?.['emails'];
+
+  if (typeof teamName !== 'string' || !teamName.trim()) {
+    throw new Error('teamName is required and must be a non-empty string');
+  }
+  if (!Array.isArray(emails) || emails.length === 0) {
+    throw new Error('emails is required and must be a non-empty array of email strings');
   }
 
-  const github = new GitHubMCPAdapter();
-  let jira: JiraMCPAdapter | null = null;
+  const emailList = emails.filter((e): e is string => typeof e === 'string' && e.includes('@'));
+  if (emailList.length === 0) {
+    throw new Error('No valid email addresses provided');
+  }
 
-  try {
-    // Connect to GitHub MCP
-    await github.connect();
-    const githubActivity = await github.fetchActivity(hours);
+  // Start with a scaffold config
+  const config = createDefaultConfig(teamName.trim(), emailList);
 
-    // Connect to Jira MCP (optional)
-    let jiraActivity = undefined;
-    if (JiraMCPAdapter.isConfigured()) {
-      try {
-        jira = new JiraMCPAdapter();
-        await jira.connect();
-        jiraActivity = await jira.fetchActivity(hours);
-      } catch (error) {
-        console.error('[prodbeam] Jira connection failed (continuing without Jira):', error);
+  const parts: string[] = [];
+  parts.push(`# Prodbeam Team Setup`);
+  parts.push('');
+  parts.push(`**Team:** ${teamName}`);
+  parts.push(`**Config directory:** ${resolveConfigDir()}`);
+  parts.push('');
+
+  // GitHub discovery
+  const ghCreds = resolveGitHubCredentials();
+  if (ghCreds) {
+    parts.push('## GitHub Discovery');
+    parts.push('');
+
+    const ghClient = new GitHubClient(ghCreds.token);
+    const ghResult = await discoverGitHubTeam(ghClient, emailList);
+
+    for (const member of ghResult.members) {
+      const configMember = config.team.members.find((m) => m.email === member.email);
+      if (configMember && member.username) {
+        configMember.github = member.username;
+        configMember.name = configMember.name ?? member.username;
+      }
+
+      const status = member.username ? `@${member.username}` : `not found`;
+      const suffix = member.error ? ` (${member.error})` : '';
+      parts.push(`- ${member.email} → ${status}${suffix}`);
+    }
+
+    if (ghResult.orgs.length > 0) {
+      config.github.org = ghResult.orgs[0];
+      parts.push('');
+      parts.push(`**Orgs:** ${ghResult.orgs.join(', ')}`);
+    }
+
+    if (ghResult.repos.length > 0) {
+      config.github.repos = ghResult.repos;
+      parts.push(`**Active repos (last 90 days):** ${ghResult.repos.length}`);
+      for (const repo of ghResult.repos) {
+        parts.push(`  - ${repo}`);
       }
     }
+    parts.push('');
+  } else {
+    parts.push('## GitHub Discovery');
+    parts.push('');
+    parts.push(
+      '⚠️ No GitHub credentials found. Set `GITHUB_TOKEN` env var or run setup again after configuring credentials.'
+    );
+    parts.push('');
+  }
 
-    // Generate report
-    const report = await generateDailyReport({
-      github: githubActivity,
-      jira: jiraActivity,
-    });
+  // Jira discovery
+  const jiraCreds = resolveJiraCredentials();
+  if (jiraCreds) {
+    parts.push('## Jira Discovery');
+    parts.push('');
 
-    return {
-      content: [{ type: 'text' as const, text: report }],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `# Daily Report - Error\n\nFailed to generate report: ${errorMessage}\n\nRun the setup_check tool to verify your configuration.`,
-        },
-      ],
-    };
-  } finally {
-    await github.disconnect();
-    if (jira) {
-      await jira.disconnect();
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    const jiraResult = await discoverJiraTeam(jiraClient, emailList, jiraCreds.host);
+
+    config.jira.host = jiraResult.host;
+
+    for (const member of jiraResult.members) {
+      const configMember = config.team.members.find((m) => m.email === member.email);
+      if (configMember && member.accountId) {
+        configMember.jiraAccountId = member.accountId;
+        if (!configMember.name && member.displayName) {
+          configMember.name = member.displayName;
+        }
+      }
+
+      const status = member.displayName ?? 'not found';
+      const suffix = member.error ? ` (${member.error})` : '';
+      parts.push(`- ${member.email} → ${status}${suffix}`);
     }
-  }
-}
 
-/**
- * Generate weekly summary report
- */
-async function handleWeeklyReport(team: boolean) {
-  // Team-wide reports require multi-user adapter support (future work)
-  if (team) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `# Team Weekly Summary\n\nTeam-wide reports are coming soon. The current adapters support single-user queries.\n\nUse generate_weekly_report without the team flag for your personal weekly summary.`,
-        },
-      ],
-    };
-  }
+    if (jiraResult.projects.length > 0) {
+      config.jira.projects = jiraResult.projects.map((p) => p.key);
+      parts.push('');
+      parts.push(
+        `**Projects:** ${jiraResult.projects.map((p) => `${p.key} (${p.name})`).join(', ')}`
+      );
+    }
 
-  // Check if GitHub is configured
-  if (!GitHubMCPAdapter.isConfigured()) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: buildSetupInstructions(
-            'GitHub is not configured. Run the setup_check tool for instructions.'
-          ),
-        },
-      ],
-    };
-  }
-
-  const github = new GitHubMCPAdapter();
-  let jira: JiraMCPAdapter | null = null;
-
-  try {
-    // Connect to GitHub MCP
-    await github.connect();
-    const githubActivity = await github.fetchActivity(168); // 7 days
-
-    // Connect to Jira MCP (optional)
-    let jiraActivity = undefined;
-    if (JiraMCPAdapter.isConfigured()) {
-      try {
-        jira = new JiraMCPAdapter();
-        await jira.connect();
-        jiraActivity = await jira.fetchActivity(168);
-      } catch (error) {
-        console.error('[prodbeam] Jira connection failed (continuing without Jira):', error);
+    if (jiraResult.activeSprints.length > 0) {
+      parts.push(`**Active sprints:**`);
+      for (const sprint of jiraResult.activeSprints) {
+        const dates =
+          sprint.startDate && sprint.endDate
+            ? ` (${sprint.startDate.split('T')[0]} → ${sprint.endDate.split('T')[0]})`
+            : '';
+        parts.push(`  - ${sprint.name}${dates}`);
       }
     }
-
-    // Generate report
-    const report = await generateWeeklyReport({
-      github: githubActivity,
-      jira: jiraActivity,
-    });
-
-    return {
-      content: [{ type: 'text' as const, text: report }],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `# Weekly Report - Error\n\nFailed to generate report: ${errorMessage}\n\nRun the setup_check tool to verify your configuration.`,
-        },
-      ],
-    };
-  } finally {
-    await github.disconnect();
-    if (jira) {
-      await jira.disconnect();
-    }
+    parts.push('');
+  } else {
+    parts.push('## Jira Discovery');
+    parts.push('');
+    parts.push(
+      '⚠️ No Jira credentials found. Set `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` env vars or configure credentials.'
+    );
+    parts.push('');
   }
+
+  // Write config
+  writeTeamConfig(config);
+
+  parts.push('---');
+  parts.push('');
+  parts.push(`✅ Team config written to \`${resolveConfigDir()}/team.json\``);
+  parts.push('');
+  parts.push('**Generated config:**');
+  parts.push('```json');
+  parts.push(JSON.stringify(config, null, 2));
+  parts.push('```');
+
+  return { content: [{ type: 'text', text: parts.join('\n') }] };
 }
 
-/**
- * Generate sprint retrospective
- */
-async function handleRetrospective(sprint?: string, from?: string, to?: string) {
-  const sprintName = sprint ?? 'Current Sprint';
+// ─── Add Member ──────────────────────────────────────────────
 
-  // Calculate hours from date range, default to 14 days (typical sprint)
-  let hours = 336; // 14 days
-  let dateFrom = '';
-  let dateTo = '';
+async function handleAddMember(
+  args: Record<string, unknown> | undefined
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const email = args?.['email'];
+  if (typeof email !== 'string' || !email.includes('@')) {
+    throw new Error('A valid email address is required');
+  }
 
-  if (from && to) {
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
-    if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime())) {
-      hours = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60)));
-      dateFrom = from;
-      dateTo = to;
+  const config = readTeamConfig();
+  if (!config) {
+    throw new Error('No team config found. Run setup_team first.');
+  }
+
+  // Check for duplicate
+  if (config.team.members.some((m) => m.email.toLowerCase() === email.toLowerCase())) {
+    throw new Error(`${email} is already a team member`);
+  }
+
+  const newMember: MemberConfig = { email };
+  const parts: string[] = [];
+  parts.push(`# Add Member: ${email}`);
+  parts.push('');
+
+  // GitHub discovery
+  const ghCreds = resolveGitHubCredentials();
+  if (ghCreds) {
+    const ghClient = new GitHubClient(ghCreds.token);
+    const username = await ghClient.searchUserByEmail(email);
+    if (username) {
+      newMember.github = username;
+      newMember.name = username;
+      parts.push(`GitHub: @${username}`);
+
+      // Discover new repos
+      const repos = await ghClient.getRecentRepos(username).catch(() => [] as string[]);
+      const newRepos = repos.filter((r) => !config.github.repos.includes(r));
+      if (newRepos.length > 0) {
+        config.github.repos.push(...newRepos);
+        parts.push(`New repos discovered: ${newRepos.join(', ')}`);
+      }
     } else {
-      dateFrom = from;
-      dateTo = to;
+      parts.push(`GitHub: not found for ${email}`);
     }
-  } else {
-    const now = new Date();
-    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-    dateFrom = twoWeeksAgo.toISOString().split('T')[0] ?? '';
-    dateTo = now.toISOString().split('T')[0] ?? '';
   }
 
-  // Check if GitHub is configured
-  if (!GitHubMCPAdapter.isConfigured()) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: buildSetupInstructions(
-            'GitHub is not configured. Run the setup_check tool for instructions.'
-          ),
-        },
-      ],
-    };
-  }
-
-  const github = new GitHubMCPAdapter();
-  let jira: JiraMCPAdapter | null = null;
-
-  try {
-    // Connect to GitHub MCP
-    await github.connect();
-    const githubActivity = await github.fetchActivity(hours);
-
-    // Connect to Jira MCP (optional)
-    let jiraActivity = undefined;
-    if (JiraMCPAdapter.isConfigured()) {
-      try {
-        jira = new JiraMCPAdapter();
-        await jira.connect();
-        jiraActivity = await jira.fetchActivity(hours);
-      } catch (error) {
-        console.error('[prodbeam] Jira connection failed (continuing without Jira):', error);
+  // Jira discovery
+  const jiraCreds = resolveJiraCredentials();
+  if (jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    const user = await jiraClient.searchUserByEmail(email);
+    if (user) {
+      newMember.jiraAccountId = user.accountId;
+      if (!newMember.name) {
+        newMember.name = user.displayName;
       }
-    }
-
-    // Generate retrospective
-    const report = await generateRetrospective({
-      sprintName,
-      dateRange: { from: dateFrom, to: dateTo },
-      github: githubActivity,
-      jira: jiraActivity,
-    });
-
-    return {
-      content: [{ type: 'text' as const, text: report }],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `# Sprint Retrospective - Error\n\nFailed to generate retrospective: ${errorMessage}\n\nRun the setup_check tool to verify your configuration.`,
-        },
-      ],
-    };
-  } finally {
-    await github.disconnect();
-    if (jira) {
-      await jira.disconnect();
+      parts.push(`Jira: ${user.displayName} (${user.accountId})`);
+    } else {
+      parts.push(`Jira: not found for ${email}`);
     }
   }
+
+  config.team.members.push(newMember);
+  writeTeamConfig(config);
+
+  parts.push('');
+  parts.push(`✅ Added ${newMember.name ?? email} to team "${config.team.name}"`);
+  parts.push(`Team now has ${config.team.members.length} members.`);
+
+  return { content: [{ type: 'text', text: parts.join('\n') }] };
 }
 
-/**
- * Check setup status and provide instructions
- */
-function handleSetupCheck() {
-  const sections: string[] = [];
-  sections.push('# Prodbeam Setup Status\n');
+// ─── Remove Member ───────────────────────────────────────────
 
-  // GitHub
-  if (GitHubMCPAdapter.isConfigured()) {
-    sections.push('## GitHub: Configured');
-    sections.push('GITHUB_PERSONAL_ACCESS_TOKEN is set.\n');
-  } else {
-    sections.push('## GitHub: Not Configured');
-    sections.push('GITHUB_PERSONAL_ACCESS_TOKEN is not set.\n');
-    sections.push('**To configure:**');
-    sections.push('1. Create a GitHub Personal Access Token at https://github.com/settings/tokens');
-    sections.push('   - Required scopes: `repo`, `read:user`');
-    sections.push('2. Add to your `.claude/mcp.json` under the prodbeam server:');
-    sections.push('```json');
-    sections.push('"env": {');
-    sections.push('  "GITHUB_PERSONAL_ACCESS_TOKEN": "<your-token>"');
-    sections.push('}');
-    sections.push('```\n');
+function handleRemoveMember(args: Record<string, unknown> | undefined): {
+  content: Array<{ type: 'text'; text: string }>;
+} {
+  const email = args?.['email'];
+  if (typeof email !== 'string' || !email.includes('@')) {
+    throw new Error('A valid email address is required');
   }
 
-  // Jira
-  if (JiraMCPAdapter.isConfigured()) {
-    sections.push('## Jira: Configured');
-    sections.push('JIRA_API_TOKEN, JIRA_EMAIL, and JIRA_URL are set.\n');
-  } else {
-    const hasPartial =
-      process.env['JIRA_API_TOKEN'] ?? process.env['JIRA_EMAIL'] ?? process.env['JIRA_URL'];
-    sections.push(`## Jira: ${hasPartial ? 'Partially Configured' : 'Not Configured (Optional)'}`);
-    sections.push('Jira integration is optional. Reports work with GitHub only.\n');
-    sections.push('**To configure:**');
-    sections.push('1. Create a Jira API Token at https://id.atlassian.com/manage/api-tokens');
-    sections.push('2. Add to your `.claude/mcp.json` under the prodbeam server:');
-    sections.push('```json');
-    sections.push('"env": {');
-    sections.push('  "JIRA_API_TOKEN": "<your-token>",');
-    sections.push('  "JIRA_EMAIL": "<your-email>",');
-    sections.push('  "JIRA_URL": "https://<company>.atlassian.net"');
-    sections.push('}');
-    sections.push('```\n');
+  const config = readTeamConfig();
+  if (!config) {
+    throw new Error('No team config found. Run setup_team first.');
   }
 
-  // AI
-  if (isAIConfigured()) {
-    sections.push('## AI Report Generation: Configured');
-    sections.push('ANTHROPIC_API_KEY is set. Reports will use AI-powered summaries.\n');
-  } else {
-    sections.push('## AI Report Generation: Not Configured');
-    sections.push('ANTHROPIC_API_KEY is not set. Reports will use raw data format.\n');
-    sections.push('**To configure:**');
-    sections.push('Add to your `.claude/mcp.json` under the prodbeam server:');
-    sections.push('```json');
-    sections.push('"env": {');
-    sections.push('  "ANTHROPIC_API_KEY": "<your-key>"');
-    sections.push('}');
-    sections.push('```\n');
+  const index = config.team.members.findIndex((m) => m.email.toLowerCase() === email.toLowerCase());
+  if (index === -1) {
+    throw new Error(`${email} is not a team member`);
   }
 
-  // Summary
-  const configured: string[] = [];
-  const missing: string[] = [];
-  if (GitHubMCPAdapter.isConfigured()) configured.push('GitHub');
-  else missing.push('GitHub');
-  if (JiraMCPAdapter.isConfigured()) configured.push('Jira');
-  if (isAIConfigured()) configured.push('AI');
-  else missing.push('AI (optional)');
+  const removed = config.team.members[index];
+  config.team.members.splice(index, 1);
 
-  sections.push('---');
-  sections.push(`**Configured:** ${configured.join(', ') || 'None'}`);
-  if (missing.length > 0) {
-    sections.push(`**Missing:** ${missing.join(', ')}`);
+  if (config.team.members.length === 0) {
+    throw new Error('Cannot remove the last team member. Delete the config file instead.');
   }
 
-  const ready = GitHubMCPAdapter.isConfigured();
-  sections.push(
-    ready
-      ? '\nReady to generate reports. Try: generate_daily_report'
-      : '\nGitHub token is required to generate reports.'
-  );
+  writeTeamConfig(config);
 
   return {
-    content: [{ type: 'text' as const, text: sections.join('\n') }],
+    content: [
+      {
+        type: 'text',
+        text: `Removed ${removed?.name ?? email} from team "${config.team.name}"\nTeam now has ${config.team.members.length} members.`,
+      },
+    ],
+  };
+}
+
+// ─── Refresh Config ──────────────────────────────────────────
+
+async function handleRefreshConfig(): Promise<{
+  content: Array<{ type: 'text'; text: string }>;
+}> {
+  const config = readTeamConfig();
+  if (!config) {
+    throw new Error('No team config found. Run setup_team first.');
+  }
+
+  const parts: string[] = [];
+  parts.push('# Config Refresh');
+  parts.push('');
+
+  const emails = config.team.members.map((m) => m.email);
+
+  // Re-run GitHub discovery
+  const ghCreds = resolveGitHubCredentials();
+  if (ghCreds) {
+    const ghClient = new GitHubClient(ghCreds.token);
+    const ghResult = await discoverGitHubTeam(ghClient, emails);
+
+    // Update member GitHub usernames
+    for (const member of ghResult.members) {
+      const configMember = config.team.members.find((m) => m.email === member.email);
+      if (configMember && member.username) {
+        configMember.github = member.username;
+      }
+    }
+
+    // Find new repos
+    const previousRepos = new Set(config.github.repos);
+    const newRepos = ghResult.repos.filter((r) => !previousRepos.has(r));
+    if (newRepos.length > 0) {
+      config.github.repos = ghResult.repos;
+      parts.push(`**New repos discovered:** ${newRepos.join(', ')}`);
+    } else {
+      parts.push(`**Repos:** no changes (${config.github.repos.length} tracked)`);
+    }
+
+    if (ghResult.orgs.length > 0) {
+      config.github.org = ghResult.orgs[0];
+    }
+  }
+
+  // Re-run Jira discovery
+  const jiraCreds = resolveJiraCredentials();
+  if (jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    const jiraResult = await discoverJiraTeam(jiraClient, emails, jiraCreds.host);
+
+    // Update member Jira accounts
+    for (const member of jiraResult.members) {
+      const configMember = config.team.members.find((m) => m.email === member.email);
+      if (configMember && member.accountId) {
+        configMember.jiraAccountId = member.accountId;
+        if (!configMember.name && member.displayName) {
+          configMember.name = member.displayName;
+        }
+      }
+    }
+
+    // Update projects
+    const newProjects = jiraResult.projects.map((p) => p.key);
+    config.jira.projects = newProjects;
+
+    if (jiraResult.activeSprints.length > 0) {
+      parts.push(`**Active sprints:**`);
+      for (const sprint of jiraResult.activeSprints) {
+        parts.push(`  - ${sprint.name} [${sprint.state}]`);
+      }
+    }
+  }
+
+  writeTeamConfig(config);
+
+  parts.push('');
+  parts.push(`✅ Config refreshed at \`${resolveConfigDir()}/team.json\``);
+
+  return { content: [{ type: 'text', text: parts.join('\n') }] };
+}
+
+// ─── Standup (Personal) ─────────────────────────────────────
+
+async function handleStandup(
+  args: Record<string, unknown> | undefined
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const config = requireTeamConfig();
+  const email = typeof args?.['email'] === 'string' ? args['email'] : undefined;
+  const member = resolveMember(config, email);
+
+  if (!member.github) {
+    throw new Error(`No GitHub username for ${member.email}. Run refresh_config to re-discover.`);
+  }
+
+  const timeRange = dailyTimeRange();
+  const ghCreds = resolveGitHubCredentials();
+
+  if (!ghCreds) {
+    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
+  }
+
+  const ghClient = new GitHubClient(ghCreds.token);
+  const github = await fetchGitHubActivityForUser(
+    ghClient,
+    member.github,
+    config.github.repos,
+    timeRange
+  );
+
+  // Jira (optional)
+  let jira;
+  const jiraCreds = resolveJiraCredentials();
+  if (jiraCreds && member.jiraAccountId) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    jira = await fetchJiraActivityForUser(
+      jiraClient,
+      member.jiraAccountId,
+      config.jira.projects,
+      timeRange
+    );
+  }
+
+  const report = generateDailyReport({ github, jira });
+  return { content: [{ type: 'text', text: report }] };
+}
+
+// ─── Team Standup ───────────────────────────────────────────
+
+async function handleTeamStandup(): Promise<{
+  content: Array<{ type: 'text'; text: string }>;
+}> {
+  const config = requireTeamConfig();
+  const ghCreds = resolveGitHubCredentials();
+
+  if (!ghCreds) {
+    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
+  }
+
+  const timeRange = dailyTimeRange();
+  const ghClient = new GitHubClient(ghCreds.token);
+  const jiraCreds = resolveJiraCredentials();
+  const jiraClient = jiraCreds
+    ? new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken)
+    : null;
+
+  // Get GitHub usernames for all members
+  const membersWithGH = config.team.members.filter((m) => m.github);
+  const usernames = membersWithGH.map((m) => m.github!);
+
+  // Fetch all GitHub activity at once, split by member
+  const ghActivities = await fetchTeamGitHubActivity(
+    ghClient,
+    usernames,
+    config.github.repos,
+    timeRange
+  );
+
+  // Build per-member activities
+  const memberActivities: Array<{
+    github: (typeof ghActivities)[0];
+    jira?: Awaited<ReturnType<typeof fetchJiraActivityForUser>>;
+  }> = [];
+
+  for (let i = 0; i < membersWithGH.length; i++) {
+    const member = membersWithGH[i]!;
+    const github = ghActivities[i]!;
+
+    let jira;
+    if (jiraClient && member.jiraAccountId) {
+      jira = await fetchJiraActivityForUser(
+        jiraClient,
+        member.jiraAccountId,
+        config.jira.projects,
+        timeRange
+      );
+    }
+
+    memberActivities.push({ github, jira });
+  }
+
+  const report = generateTeamDailyReport(memberActivities, config.team.name);
+  return { content: [{ type: 'text', text: report }] };
+}
+
+// ─── Weekly Summary ─────────────────────────────────────────
+
+async function handleWeeklySummary(
+  args: Record<string, unknown> | undefined
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const config = requireTeamConfig();
+  const ghCreds = resolveGitHubCredentials();
+
+  if (!ghCreds) {
+    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
+  }
+
+  const weeksAgo = typeof args?.['weeksAgo'] === 'number' ? args['weeksAgo'] : 0;
+  const timeRange = weeklyTimeRange(weeksAgo);
+  const ghClient = new GitHubClient(ghCreds.token);
+
+  // Aggregate all team members' activity into one GitHubActivity
+  const membersWithGH = config.team.members.filter((m) => m.github);
+  const usernames = membersWithGH.map((m) => m.github!);
+
+  const perMember = await fetchTeamGitHubActivity(
+    ghClient,
+    usernames,
+    config.github.repos,
+    timeRange
+  );
+
+  // Merge into a single aggregated GitHubActivity
+  const github = mergeGitHubActivities(perMember, config.team.name, timeRange);
+
+  // Jira (optional)
+  let jira;
+  const jiraCreds = resolveJiraCredentials();
+  if (jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    jira = await fetchTeamJiraActivity(jiraClient, config.jira.projects, timeRange);
+  }
+
+  // Intelligence: snapshot, trends, anomalies, health
+  const snapshot = buildSnapshot({
+    teamName: config.team.name,
+    snapshotType: 'weekly',
+    periodStart: timeRange.from,
+    periodEnd: timeRange.to,
+    github,
+    jira,
+  });
+
+  const thresholds = resolveThresholds(config.settings.thresholds);
+  const extras: ReportExtras = {};
+  try {
+    const store = new HistoryStore();
+    const previous = store.getPreviousSnapshot('weekly', timeRange.to);
+    const history = store.getWeeklyHistory(5);
+    extras.trends = analyzeTrends(snapshot, previous, thresholds);
+    extras.anomalies = detectAnomalies({
+      pullRequests: github.pullRequests,
+      reviews: github.reviews,
+      jiraIssues: jira?.issues ?? [],
+      memberActivity: buildMemberActivity(perMember),
+      thresholds,
+    });
+    extras.health = assessTeamHealth({
+      current: snapshot,
+      history,
+      memberSnapshots: buildMemberSnapshots(perMember),
+      thresholds,
+    });
+    store.saveSnapshot(snapshot);
+    store.close();
+  } catch {
+    // Intelligence is best-effort — don't fail the report if DB has issues
+  }
+
+  const report = generateWeeklyReport({ github, jira }, extras);
+  return { content: [{ type: 'text', text: report }] };
+}
+
+// ─── Sprint Retro ───────────────────────────────────────────
+
+async function handleSprintRetro(
+  args: Record<string, unknown> | undefined
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const config = requireTeamConfig();
+  const ghCreds = resolveGitHubCredentials();
+  const jiraCreds = resolveJiraCredentials();
+
+  if (!ghCreds) {
+    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
+  }
+
+  let sprintName = typeof args?.['sprintName'] === 'string' ? args['sprintName'] : undefined;
+  let timeRange;
+
+  // Detect sprint from Jira if not provided
+  if (!sprintName && jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
+    if (activeSprint) {
+      sprintName = activeSprint.name;
+      timeRange = sprintTimeRange(activeSprint.startDate, activeSprint.endDate);
+    }
+  }
+
+  if (!sprintName) {
+    throw new Error(
+      'No active sprint detected. Provide a sprintName parameter or ensure Jira credentials are configured.'
+    );
+  }
+
+  // Default time range to last 2 weeks if sprint dates not available
+  if (!timeRange) {
+    timeRange = weeklyTimeRange(0);
+    // Extend to 2 weeks for a typical sprint
+    const from = new Date(new Date(timeRange.to).getTime() - 14 * 24 * 60 * 60 * 1000);
+    timeRange = { from: from.toISOString(), to: timeRange.to };
+  }
+
+  const ghClient = new GitHubClient(ghCreds.token);
+  const membersWithGH = config.team.members.filter((m) => m.github);
+  const usernames = membersWithGH.map((m) => m.github!);
+
+  const perMember = await fetchTeamGitHubActivity(
+    ghClient,
+    usernames,
+    config.github.repos,
+    timeRange
+  );
+
+  const github = mergeGitHubActivities(perMember, config.team.name, timeRange);
+
+  // Jira sprint data
+  let jira;
+  if (jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    jira = await fetchSprintJiraActivity(jiraClient, sprintName, timeRange);
+  }
+
+  const dateRange = {
+    from: timeRange.from.split('T')[0]!,
+    to: timeRange.to.split('T')[0]!,
+  };
+
+  // Intelligence: snapshot, trends, anomalies, health
+  const snapshot = buildSnapshot({
+    teamName: config.team.name,
+    snapshotType: 'sprint',
+    periodStart: timeRange.from,
+    periodEnd: timeRange.to,
+    sprintName,
+    github,
+    jira,
+  });
+
+  const thresholds = resolveThresholds(config.settings.thresholds);
+  const extras: ReportExtras = {};
+  try {
+    const store = new HistoryStore();
+    const previous = store.getPreviousSnapshot('sprint', timeRange.to);
+    const history = store.getSprintHistory(5);
+    extras.trends = analyzeTrends(snapshot, previous, thresholds);
+    extras.anomalies = detectAnomalies({
+      pullRequests: github.pullRequests,
+      reviews: github.reviews,
+      jiraIssues: jira?.issues ?? [],
+      memberActivity: buildMemberActivity(perMember),
+      thresholds,
+    });
+    extras.health = assessTeamHealth({
+      current: snapshot,
+      history,
+      memberSnapshots: buildMemberSnapshots(perMember),
+      thresholds,
+    });
+    store.saveSnapshot(snapshot);
+    store.close();
+  } catch {
+    // Intelligence is best-effort — don't fail the report if DB has issues
+  }
+
+  const report = generateRetrospective({ github, jira, sprintName, dateRange }, extras);
+  return { content: [{ type: 'text', text: report }] };
+}
+
+// ─── Shared Helpers ─────────────────────────────────────────
+
+/**
+ * Read and validate team config, throwing a helpful error if missing.
+ */
+function requireTeamConfig(): TeamConfig {
+  const config = readTeamConfig();
+  if (!config) {
+    throw new Error('No team config found. Run setup_team first.');
+  }
+  return config;
+}
+
+/**
+ * Resolve which team member to generate a report for.
+ * If email provided, find that member. Otherwise use the first member.
+ */
+function resolveMember(config: TeamConfig, email?: string): MemberConfig {
+  if (email) {
+    const member = config.team.members.find((m) => m.email.toLowerCase() === email.toLowerCase());
+    if (!member) {
+      throw new Error(`${email} is not a team member. Check your config.`);
+    }
+    return member;
+  }
+
+  const first = config.team.members[0];
+  if (!first) {
+    throw new Error('No team members configured.');
+  }
+  return first;
+}
+
+/**
+ * Merge multiple per-member GitHubActivity objects into one aggregate.
+ */
+function mergeGitHubActivities(
+  activities: Array<{
+    username: string;
+    commits: {
+      sha: string;
+      message: string;
+      author: string;
+      date: string;
+      repo: string;
+      url: string;
+    }[];
+    pullRequests: {
+      number: number;
+      title: string;
+      state: 'open' | 'closed' | 'merged';
+      author: string;
+      createdAt: string;
+      updatedAt: string;
+      mergedAt?: string;
+      repo: string;
+      url: string;
+      additions?: number;
+      deletions?: number;
+    }[];
+    reviews: {
+      pullRequestNumber: number;
+      pullRequestTitle: string;
+      author: string;
+      state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'PENDING';
+      submittedAt: string;
+      repo: string;
+    }[];
+    timeRange: { from: string; to: string };
+  }>,
+  teamName: string,
+  timeRange: { from: string; to: string }
+) {
+  return {
+    username: teamName,
+    commits: activities.flatMap((a) => a.commits),
+    pullRequests: activities.flatMap((a) => a.pullRequests),
+    reviews: activities.flatMap((a) => a.reviews),
+    timeRange,
   };
 }
 
 /**
- * Build setup instruction text for error responses
+ * Convert per-member GitHubActivity into anomaly detector input format.
  */
-function buildSetupInstructions(message: string): string {
-  return `${message}\n\nRun the **setup_check** tool for detailed configuration instructions.`;
+function buildMemberActivity(
+  perMember: Array<{
+    username: string;
+    commits: { sha: string }[];
+    pullRequests: { author: string; additions?: number; deletions?: number }[];
+    reviews: { author: string }[];
+  }>
+) {
+  return perMember.map((m) => ({
+    username: m.username,
+    commits: m.commits.length,
+    prsAuthored: m.pullRequests.length,
+    reviewsGiven: m.reviews.length,
+    additions: m.pullRequests.reduce((sum, pr) => sum + (pr.additions ?? 0), 0),
+    deletions: m.pullRequests.reduce((sum, pr) => sum + (pr.deletions ?? 0), 0),
+  }));
 }
 
 /**
- * Start the MCP server
+ * Convert per-member GitHubActivity into MemberSnapshot format for team health.
  */
+function buildMemberSnapshots(
+  perMember: Array<{
+    username: string;
+    commits: { sha: string }[];
+    pullRequests: { state: string; additions?: number; deletions?: number }[];
+    reviews: { author: string }[];
+  }>
+) {
+  return perMember.map((m) => ({
+    memberGithub: m.username,
+    commits: m.commits.length,
+    prs: m.pullRequests.length,
+    prsMerged: m.pullRequests.filter((pr) => pr.state === 'merged').length,
+    reviewsGiven: m.reviews.length,
+    additions: m.pullRequests.reduce((sum, pr) => sum + (pr.additions ?? 0), 0),
+    deletions: m.pullRequests.reduce((sum, pr) => sum + (pr.deletions ?? 0), 0),
+    jiraCompleted: 0,
+  }));
+}
+
+// ─── Get Capabilities ────────────────────────────────────────
+
+function handleGetCapabilities(): { content: Array<{ type: 'text'; text: string }> } {
+  const configExists = teamConfigExists();
+  const config = configExists ? readTeamConfig() : null;
+  const ghCreds = resolveGitHubCredentials();
+  const jiraCreds = resolveJiraCredentials();
+
+  const parts: string[] = [];
+  parts.push('# Prodbeam MCP v2');
+  parts.push('');
+
+  // Status
+  parts.push('## Status');
+  parts.push('');
+  parts.push(`| Component | Status |`);
+  parts.push(`|-----------|--------|`);
+  parts.push(`| Config directory | \`${resolveConfigDir()}\` |`);
+  parts.push(
+    `| Team config | ${configExists ? `✅ ${config?.team.name} (${config?.team.members.length} members)` : '❌ Not configured'} |`
+  );
+  parts.push(`| GitHub credentials | ${ghCreds ? '✅ Token configured' : '❌ Not configured'} |`);
+  parts.push(
+    `| Jira credentials | ${jiraCreds ? `✅ ${jiraCreds.host}` : '❌ Not configured (optional)'} |`
+  );
+  parts.push('');
+
+  // Setup guidance when things are missing
+  if (!ghCreds || !configExists) {
+    parts.push('## Getting Started');
+    parts.push('');
+    renderSetupGuide(parts, { ghCreds: !!ghCreds, jiraCreds: !!jiraCreds, configExists });
+  }
+
+  if (config) {
+    parts.push('## Team');
+    parts.push('');
+    for (const m of config.team.members) {
+      const gh = m.github ? `@${m.github}` : 'no GitHub';
+      const jira = m.jiraAccountId ? '✅ Jira' : 'no Jira';
+      parts.push(`- ${m.name ?? m.email} (${gh}, ${jira})`);
+    }
+    parts.push('');
+    parts.push(`**Repos:** ${config.github.repos.join(', ') || 'none'}`);
+    parts.push(`**Jira projects:** ${config.jira.projects.join(', ') || 'none'}`);
+    parts.push('');
+  }
+
+  // Thresholds
+  parts.push('## Intelligence Thresholds');
+  parts.push('');
+  const t = resolveThresholds(config?.settings.thresholds);
+  parts.push(`| Threshold | Value |`);
+  parts.push(`|-----------|-------|`);
+  parts.push(`| Stale PR warning | ${t.stalePrWarningDays}d |`);
+  parts.push(`| Stale PR alert | ${t.stalePrAlertDays}d |`);
+  parts.push(`| Stale issue | ${t.staleIssueDays}d |`);
+  parts.push(`| Review imbalance | ${Math.round(t.reviewImbalanceThreshold * 100)}% |`);
+  parts.push(`| High churn multiplier | ${t.highChurnMultiplier}x avg |`);
+  parts.push(`| High churn minimum | ${t.highChurnMinimum} lines |`);
+  parts.push(`| Trend alert | ${t.trendAlertPercent}% change |`);
+  parts.push(`| Trend warning | ${t.trendWarningPercent}% change |`);
+  parts.push(`| Merge time warning | ${t.mergeTimeWarningH}h |`);
+  parts.push(`| Merge time alert | ${t.mergeTimeAlertH}h |`);
+  parts.push('');
+
+  // Tools
+  parts.push('## Available Tools');
+  parts.push('');
+  parts.push('### Setup');
+  parts.push('- **setup_team** — One-time setup with team name + member emails');
+  parts.push('- **add_member** — Add a member by email');
+  parts.push('- **remove_member** — Remove a member by email');
+  parts.push('- **refresh_config** — Re-scan repos and sprints');
+  parts.push('');
+  parts.push('### Reports');
+  parts.push('- **standup** — Personal daily standup (last 24h)');
+  parts.push('- **team_standup** — Full team standup (last 24h)');
+  parts.push('- **weekly_summary** — Week-in-review with metrics');
+  parts.push('- **sprint_retro** — Sprint retrospective with completion rates');
+
+  return { content: [{ type: 'text', text: parts.join('\n') }] };
+}
+
+/**
+ * Render step-by-step setup guidance based on what's missing.
+ */
+function renderSetupGuide(
+  parts: string[],
+  status: { ghCreds: boolean; jiraCreds: boolean; configExists: boolean }
+): void {
+  let step = 1;
+
+  if (!status.ghCreds) {
+    parts.push(`### Step ${step}: Set up GitHub credentials (required)`);
+    parts.push('');
+    parts.push('1. Go to https://github.com/settings/tokens');
+    parts.push('2. Click **"Generate new token (classic)"**');
+    parts.push('3. Select these scopes: `repo`, `read:user`, `read:org`');
+    parts.push('4. Copy the token and add it to your MCP server config:');
+    parts.push('');
+    parts.push('```json');
+    parts.push('{');
+    parts.push('  "mcpServers": {');
+    parts.push('    "prodbeam": {');
+    parts.push('      "command": "npx",');
+    parts.push('      "args": ["-y", "@prodbeam/mcp"],');
+    parts.push('      "env": {');
+    parts.push('        "GITHUB_TOKEN": "ghp_your_token_here"');
+    parts.push('      }');
+    parts.push('    }');
+    parts.push('  }');
+    parts.push('}');
+    parts.push('```');
+    parts.push('');
+    parts.push(
+      'After updating your config, restart your MCP client and run `get_capabilities` again.'
+    );
+    parts.push('');
+    step++;
+  }
+
+  if (!status.jiraCreds) {
+    parts.push(`### Step ${step}: Set up Jira credentials (optional)`);
+    parts.push('');
+    parts.push('Skip this step if your team does not use Jira. Prodbeam works with GitHub alone.');
+    parts.push('');
+    parts.push('1. Go to https://id.atlassian.com/manage/api-tokens');
+    parts.push('2. Click **"Create API token"**, give it a label like "Prodbeam"');
+    parts.push('3. Add these env vars to your MCP server config:');
+    parts.push('');
+    parts.push('```json');
+    parts.push('"env": {');
+    parts.push('  "GITHUB_TOKEN": "ghp_your_token_here",');
+    parts.push('  "JIRA_HOST": "https://yourcompany.atlassian.net",');
+    parts.push('  "JIRA_EMAIL": "you@company.com",');
+    parts.push('  "JIRA_API_TOKEN": "your_jira_api_token"');
+    parts.push('}');
+    parts.push('```');
+    parts.push('');
+    step++;
+  }
+
+  if (!status.configExists) {
+    parts.push(`### Step ${step}: Set up your team`);
+    parts.push('');
+    if (!status.ghCreds) {
+      parts.push('Once GitHub credentials are configured, run:');
+    } else {
+      parts.push('Run:');
+    }
+    parts.push('');
+    parts.push('> `setup_team` with your team name and member email addresses');
+    parts.push('');
+    parts.push(
+      'Prodbeam will auto-discover GitHub usernames, Jira accounts, active repos, and projects.'
+    );
+    parts.push('');
+  }
+}
+
+// ─── Start Server ────────────────────────────────────────────
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[prodbeam] MCP server started successfully');
+  console.error('[prodbeam] MCP server v2.0.0 started');
 }
 
 main().catch((error) => {
-  console.error('[prodbeam] Fatal error starting MCP server:', error);
+  console.error('[prodbeam] Fatal error:', error);
   process.exit(1);
 });

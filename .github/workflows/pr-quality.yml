@@ -1,0 +1,52 @@
+name: PR Quality
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: pr-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit messages
+        uses: webiny/action-conventional-commits@v1.3.0
+        with:
+          allowed-commit-types: "feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert,deps"
+
+  pr-size-label:
+    name: PR Size Label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Label PR by size
+        uses: codelytv/pr-size-labeler@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          xs_label: "size/XS"
+          xs_max_size: 10
+          s_label: "size/S"
+          s_max_size: 100
+          m_label: "size/M"
+          m_max_size: 400
+          l_label: "size/L"
+          l_max_size: 1000
+          xl_label: "size/XL"
+          fail_if_xl: false
+          message_if_xl: >
+            This PR is very large (1000+ lines). Consider breaking it into smaller PRs for easier review.
+          files_to_ignore: "package-lock.json"

@@ -1,4 +1,4 @@
-# Prodbeam for Claude Code
+# Prodbeam MCP Server
 
 **Status:** Work in Progress (Pre-release)
 **Target Launch:** March 2026
@@ -7,7 +7,7 @@
 
 ## What is this?
 
-An MCP server for Claude Code that generates AI-powered engineering reports directly from your terminal:
+An MCP server that generates AI-powered engineering reports. Works with any MCP client (Claude Code, Cursor, Windsurf, Cline, etc.):
 
 - **Daily standups** from your commits, PRs, and Jira tickets
 - **Weekly reports** with team metrics and insights
@@ -39,20 +39,20 @@ No duplicate authentication. No new OAuth flows.
 
 ### Prerequisites
 
-- [Claude Code CLI](https://claude.ai/code) installed
+- An MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, etc.)
 - A GitHub Personal Access Token ([create one](https://github.com/settings/tokens))
 - Optionally: Jira API Token ([create one](https://id.atlassian.com/manage/api-tokens))
 
 ### Setup
 
-Add to your `.claude/mcp.json`:
+Add to your MCP client config (example for Claude Code `.claude/mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "prodbeam": {
       "command": "npx",
-      "args": ["-y", "@prodbeam/claude-mcp"],
+      "args": ["-y", "@prodbeam/mcp"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "<your-github-token>",
         "ANTHROPIC_API_KEY": "<your-anthropic-key>"
@@ -118,7 +118,7 @@ $ claude
 
 ## Features
 
-- **Terminal-native** - Works directly in Claude Code CLI
+- **MCP-native** - Works with any MCP client
 - **Reuses existing tokens** - Same GitHub/Jira tokens you already have
 - **AI-powered** - Uses Anthropic Claude for natural language reports
 - **Graceful fallback** - Works with GitHub only, Jira is optional
@@ -186,7 +186,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 [Prodbeam](https://prodbeam.com) is an AI-powered Engineering Intelligence Platform.
 
 - **Web App**: Full engineering intelligence platform at [prodbeam.com](https://prodbeam.com)
-- **Claude Code Plugin**: Terminal-native reports (this repo)
+- **MCP Server**: Engineering intelligence for any MCP client (this repo)
 
 ---
 
@@ -199,5 +199,5 @@ MIT License - See [LICENSE](LICENSE) file.
 ## Links
 
 - Website: [prodbeam.com](https://prodbeam.com)
-- Docs: [prodbeam.com/claude-plugin](https://prodbeam.com/claude-plugin) (coming soon)
-- Issues: [GitHub Issues](https://github.com/prodbeam/claude-mcp/issues)
+- Docs: [prodbeam.com/docs](https://prodbeam.com/docs) (coming soon)
+- Issues: [GitHub Issues](https://github.com/prodbeam/prodbeam-mcp/issues)

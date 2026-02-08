@@ -1,19 +1,26 @@
 /**
- * AI Report Generator
+ * Report Generator
  *
- * Uses Anthropic Claude API to transform raw activity data into
- * human-readable standup reports.
- *
- * Falls back to raw data formatting if ANTHROPIC_API_KEY is not configured.
+ * Transforms pre-fetched activity data into structured Markdown reports.
+ * All functions are synchronous — no I/O, no API calls.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import type { GitHubActivity } from '../types/github.js';
 import type { JiraActivity } from '../types/jira.js';
-import type { WeeklyReportInput, WeeklyMetrics } from '../types/weekly.js';
-import type { RetroReportInput, SprintMetrics } from '../types/retrospective.js';
+import type { WeeklyReportInput } from '../types/weekly.js';
+import type { RetroReportInput } from '../types/retrospective.js';
+import type { TrendInsight } from '../insights/types.js';
+import type { Anomaly } from '../insights/anomaly-detector.js';
+import type { TeamHealthReport } from '../insights/team-health.js';
 import { calculateWeeklyMetrics } from './metrics-calculator.js';
 import { analyzeSprintActivity } from './sprint-analyzer.js';
+
+/** Optional intelligence extras that can be injected into reports. */
+export interface ReportExtras {
+  trends?: TrendInsight[];
+  anomalies?: Anomaly[];
+  health?: TeamHealthReport;
+}
 
 interface DailyReportInput {
   github: GitHubActivity;
@@ -21,147 +28,9 @@ interface DailyReportInput {
 }
 
 /**
- * Check if AI report generation is available
+ * Generate a daily standup report from pre-fetched data
  */
-export function isAIConfigured(): boolean {
-  return Boolean(process.env['ANTHROPIC_API_KEY']);
-}
-
-/**
- * Generate a daily standup report using AI
- */
-export async function generateDailyReport(input: DailyReportInput): Promise<string> {
-  const rawSummary = buildRawSummary(input);
-
-  if (!isAIConfigured()) {
-    return buildFallbackReport(input, rawSummary);
-  }
-
-  try {
-    return await generateWithAI(rawSummary, input);
-  } catch (error) {
-    console.error('[prodbeam] AI generation failed, using fallback:', error);
-    return buildFallbackReport(input, rawSummary);
-  }
-}
-
-/**
- * Build a text summary of raw activity data for the AI prompt
- */
-function buildRawSummary(input: DailyReportInput): string {
-  const { github, jira } = input;
-  const parts: string[] = [];
-
-  // Commits
-  parts.push(`**GitHub Commits (${github.commits.length}):**`);
-  if (github.commits.length > 0) {
-    for (const c of github.commits) {
-      parts.push(`- ${c.message} (${c.sha} in ${c.repo})`);
-    }
-  } else {
-    parts.push('- No commits');
-  }
-
-  parts.push('');
-
-  // Pull Requests
-  parts.push(`**GitHub Pull Requests (${github.pullRequests.length}):**`);
-  if (github.pullRequests.length > 0) {
-    for (const pr of github.pullRequests) {
-      const stats = pr.additions !== undefined ? ` (+${pr.additions}/-${pr.deletions})` : '';
-      parts.push(`- #${pr.number}: ${pr.title} [${pr.state}]${stats} (${pr.repo})`);
-    }
-  } else {
-    parts.push('- No pull requests');
-  }
-
-  parts.push('');
-
-  // Reviews
-  parts.push(`**GitHub Reviews (${github.reviews.length}):**`);
-  if (github.reviews.length > 0) {
-    for (const r of github.reviews) {
-      parts.push(
-        `- Reviewed PR #${r.pullRequestNumber}: ${r.pullRequestTitle} [${r.state}] (${r.repo})`
-      );
-    }
-  } else {
-    parts.push('- No reviews');
-  }
-
-  // Jira
-  if (jira && jira.issues.length > 0) {
-    parts.push('');
-    parts.push(`**Jira Issues (${jira.issues.length}):**`);
-    for (const issue of jira.issues) {
-      parts.push(`- ${issue.key}: ${issue.summary} [${issue.status}]`);
-    }
-  }
-
-  return parts.join('\n');
-}
-
-/**
- * Generate report using Anthropic Claude API
- */
-async function generateWithAI(rawSummary: string, input: DailyReportInput): Promise<string> {
-  const anthropic = new Anthropic();
-
-  const today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1500,
-    system: `You are a concise technical writer generating daily standup reports for software developers.
-
-Rules:
-- Use bullet points, be concise
-- Focus on accomplishments (what was done), not process
-- Identify blockers from stale PRs (open > 2 days) or stuck tickets
-- Be professional, not cheerful
-- Do NOT invent work that isn't in the data
-- For "Today" section, infer from open PRs and in-progress tickets
-- Output only the report in Markdown, no extra commentary`,
-
-    messages: [
-      {
-        role: 'user',
-        content: `Generate a daily standup report for ${today} based on this activity from the last 24 hours by GitHub user "${input.github.username}":
-
-${rawSummary}
-
-Format:
-# Daily Standup - ${today}
-
-## Yesterday
-- [accomplishments based on merged PRs, commits, completed tickets]
-
-## Today
-- [planned work based on open PRs, in-progress tickets]
-
-## Blockers
-- [any blockers, or "None" if clear]`,
-      },
-    ],
-  });
-
-  const textBlock = message.content.find((block) => block.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('No text content in AI response');
-  }
-
-  return textBlock.text;
-}
-
-/**
- * Build a structured report without AI (fallback)
- */
-function buildFallbackReport(input: DailyReportInput, rawSummary: string): string {
+export function generateDailyReport(input: DailyReportInput): string {
   const { github, jira } = input;
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -221,199 +90,121 @@ function buildFallbackReport(input: DailyReportInput, rawSummary: string): strin
   parts.push('');
   parts.push('---');
 
-  if (!isAIConfigured()) {
-    parts.push('_Set ANTHROPIC_API_KEY for AI-powered standup summaries._');
-  }
-
-  // Include raw summary as debug info
-  void rawSummary;
-
   return parts.join('\n');
 }
 
 /**
- * Generate a weekly summary report using AI
+ * Generate a team daily standup report — per-member sections + aggregate.
  */
-export async function generateWeeklyReport(input: WeeklyReportInput): Promise<string> {
-  const metrics = calculateWeeklyMetrics(input.github, input.jira);
-  const rawSummary = buildWeeklyRawSummary(input, metrics);
-
-  if (!isAIConfigured()) {
-    return buildWeeklyFallbackReport(input, metrics);
-  }
-
-  try {
-    return await generateWeeklyWithAI(rawSummary, input, metrics);
-  } catch (error) {
-    console.error('[prodbeam] AI generation failed for weekly report, using fallback:', error);
-    return buildWeeklyFallbackReport(input, metrics);
-  }
-}
-
-/**
- * Build a text summary of weekly activity for the AI prompt
- */
-function buildWeeklyRawSummary(input: WeeklyReportInput, metrics: WeeklyMetrics): string {
-  const { github, jira } = input;
-  const parts: string[] = [];
-
-  // Overview
-  parts.push(`**Weekly Summary for ${github.username}**`);
-  parts.push(`Period: ${github.timeRange.from} to ${github.timeRange.to}`);
-  parts.push('');
-
-  // Metrics
-  parts.push(`**Metrics:**`);
-  parts.push(`- Commits: ${metrics.totalCommits}`);
-  parts.push(
-    `- PRs: ${metrics.pullRequests.total} (${metrics.pullRequests.open} open, ${metrics.pullRequests.merged} merged, ${metrics.pullRequests.closed} closed)`
-  );
-  parts.push(`- Code changes: +${metrics.additions}/-${metrics.deletions}`);
-  parts.push(
-    `- Reviews: ${metrics.reviews.total} (${metrics.reviews.approved} approved, ${metrics.reviews.changesRequested} changes requested, ${metrics.reviews.commented} commented)`
-  );
-  parts.push('');
-
-  // Repo breakdown
-  if (metrics.repoBreakdown.length > 0) {
-    parts.push('**Repository Activity:**');
-    for (const r of metrics.repoBreakdown) {
-      parts.push(
-        `- ${r.repo}: ${r.commits} commits, ${r.pullRequests} PRs (${r.merged} merged), +${r.additions}/-${r.deletions}, ${r.reviews} reviews`
-      );
-    }
-    parts.push('');
-  }
-
-  // Commits
-  parts.push(`**Commits (${github.commits.length}):**`);
-  if (github.commits.length > 0) {
-    for (const c of github.commits) {
-      parts.push(`- ${c.message} (${c.sha} in ${c.repo})`);
-    }
-  } else {
-    parts.push('- None');
-  }
-  parts.push('');
-
-  // PRs
-  parts.push(`**Pull Requests (${github.pullRequests.length}):**`);
-  if (github.pullRequests.length > 0) {
-    for (const pr of github.pullRequests) {
-      const stats = pr.additions !== undefined ? ` (+${pr.additions}/-${pr.deletions})` : '';
-      parts.push(`- #${pr.number}: ${pr.title} [${pr.state}]${stats} (${pr.repo})`);
-    }
-  } else {
-    parts.push('- None');
-  }
-  parts.push('');
-
-  // Reviews
-  parts.push(`**Reviews (${github.reviews.length}):**`);
-  if (github.reviews.length > 0) {
-    for (const r of github.reviews) {
-      parts.push(`- PR #${r.pullRequestNumber}: ${r.pullRequestTitle} [${r.state}] (${r.repo})`);
-    }
-  } else {
-    parts.push('- None');
-  }
-
-  // Jira
-  if (jira && jira.issues.length > 0 && metrics.jira) {
-    parts.push('');
-    parts.push(`**Jira Issues (${metrics.jira.totalIssues}):**`);
-    parts.push(
-      `- By status: ${Object.entries(metrics.jira.byStatus)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(', ')}`
-    );
-    parts.push(
-      `- By priority: ${Object.entries(metrics.jira.byPriority)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(', ')}`
-    );
-    for (const issue of jira.issues) {
-      parts.push(`- ${issue.key}: ${issue.summary} [${issue.status}] (${issue.priority})`);
-    }
-  }
-
-  return parts.join('\n');
-}
-
-/**
- * Generate weekly report using Anthropic Claude API
- */
-async function generateWeeklyWithAI(
-  rawSummary: string,
-  input: WeeklyReportInput,
-  _metrics: WeeklyMetrics
-): Promise<string> {
-  const anthropic = new Anthropic();
-
-  const endDate = new Date().toLocaleDateString('en-US', {
+export function generateTeamDailyReport(
+  memberActivities: Array<{ github: GitHubActivity; jira?: JiraActivity }>,
+  teamName: string
+): string {
+  const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
 
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2500,
-    system: `You are a concise technical writer generating weekly engineering summary reports.
+  const parts: string[] = [];
+  parts.push(`# Team Standup: ${teamName} - ${today}`);
+  parts.push('');
 
-Rules:
-- Highlight significant achievements and milestones
-- Include a formatted metrics table for quick scanning
-- Break down activity by repository
-- Identify concerns: stale PRs, high churn, review bottlenecks
-- Be professional and data-driven
-- Do NOT invent work that isn't in the data
-- Output only the report in Markdown, no extra commentary`,
+  // Aggregate stats
+  let totalCommits = 0;
+  let totalPRs = 0;
+  let totalReviews = 0;
+  let totalIssues = 0;
 
-    messages: [
-      {
-        role: 'user',
-        content: `Generate a weekly engineering summary report ending ${endDate} for GitHub user "${input.github.username}":
-
-${rawSummary}
-
-Format:
-# Weekly Engineering Summary
-
-## Highlights
-- [top 3-5 achievements from merged PRs, significant commits]
-
-## Metrics
-| Metric | Count |
-|--------|-------|
-| Commits | ... |
-| Pull Requests | ... |
-| Code Changes | +.../-... |
-| Reviews | ... |
-
-## Repository Activity
-[per-repo narrative with key changes]
-
-## Concerns
-- [any blockers, stale PRs, or risks — or "None"]`,
-      },
-    ],
-  });
-
-  const textBlock = message.content.find((block) => block.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('No text content in AI response');
+  for (const { github, jira } of memberActivities) {
+    totalCommits += github.commits.length;
+    totalPRs += github.pullRequests.length;
+    totalReviews += github.reviews.length;
+    if (jira) totalIssues += jira.issues.length;
   }
 
-  return textBlock.text;
+  parts.push('## Summary');
+  parts.push('');
+  parts.push(`| Metric | Count |`);
+  parts.push(`|--------|-------|`);
+  parts.push(`| Team Members | ${memberActivities.length} |`);
+  parts.push(`| Total Commits | ${totalCommits} |`);
+  parts.push(`| Total PRs | ${totalPRs} |`);
+  parts.push(`| Total Reviews | ${totalReviews} |`);
+  if (totalIssues > 0) {
+    parts.push(`| Total Jira Issues | ${totalIssues} |`);
+  }
+  parts.push('');
+
+  // Per-member sections
+  for (const { github, jira } of memberActivities) {
+    parts.push(`## ${github.username}`);
+    parts.push('');
+
+    // Commits
+    if (github.commits.length > 0) {
+      parts.push(`**Commits:** ${github.commits.length}`);
+      for (const c of github.commits) {
+        parts.push(`- \`${c.sha}\` ${c.message} (${c.repo})`);
+      }
+      parts.push('');
+    }
+
+    // PRs
+    if (github.pullRequests.length > 0) {
+      parts.push(`**Pull Requests:** ${github.pullRequests.length}`);
+      for (const pr of github.pullRequests) {
+        parts.push(`- #${pr.number}: ${pr.title} [${pr.state}]`);
+      }
+      parts.push('');
+    }
+
+    // Reviews
+    if (github.reviews.length > 0) {
+      parts.push(`**Reviews:** ${github.reviews.length}`);
+      for (const r of github.reviews) {
+        parts.push(`- PR #${r.pullRequestNumber}: ${r.pullRequestTitle} [${r.state}]`);
+      }
+      parts.push('');
+    }
+
+    // Jira
+    if (jira && jira.issues.length > 0) {
+      parts.push(`**Jira Issues:** ${jira.issues.length}`);
+      for (const issue of jira.issues) {
+        const link = issue.url ? `[${issue.key}](${issue.url})` : issue.key;
+        parts.push(`- ${link}: ${issue.summary} [${issue.status}]`);
+      }
+      parts.push('');
+    }
+
+    // Empty activity
+    if (
+      github.commits.length === 0 &&
+      github.pullRequests.length === 0 &&
+      github.reviews.length === 0 &&
+      (!jira || jira.issues.length === 0)
+    ) {
+      parts.push('_No activity in the last 24 hours_');
+      parts.push('');
+    }
+  }
+
+  parts.push('---');
+  return parts.join('\n');
 }
 
 /**
- * Build a structured weekly report without AI (fallback)
+ * Generate a weekly summary report from pre-fetched data.
+ * Optionally includes a trend comparison section if insights are provided.
  */
-function buildWeeklyFallbackReport(input: WeeklyReportInput, metrics: WeeklyMetrics): string {
+export function generateWeeklyReport(input: WeeklyReportInput, extras?: ReportExtras): string {
   const { github, jira } = input;
+  const trends = extras?.trends;
+  const anomalies = extras?.anomalies;
+  const health = extras?.health;
+  const metrics = calculateWeeklyMetrics(github, jira);
   const endDate = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -506,198 +297,41 @@ function buildWeeklyFallbackReport(input: WeeklyReportInput, metrics: WeeklyMetr
     }
   }
 
+  // Trends
+  if (trends && trends.length > 0) {
+    parts.push('');
+    renderTrends(parts, trends);
+  }
+
+  // Anomalies
+  if (anomalies && anomalies.length > 0) {
+    parts.push('');
+    renderAnomalies(parts, anomalies);
+  }
+
+  // Team Health
+  if (health) {
+    parts.push('');
+    renderTeamHealth(parts, health);
+  }
+
   parts.push('');
   parts.push('---');
 
-  if (!isAIConfigured()) {
-    parts.push('_Set ANTHROPIC_API_KEY for AI-powered weekly summaries._');
-  }
-
   return parts.join('\n');
 }
 
 /**
- * Generate a sprint retrospective report using AI
+ * Generate a sprint retrospective report from pre-fetched data.
+ * Optionally includes intelligence sections if extras are provided.
  */
-export async function generateRetrospective(input: RetroReportInput): Promise<string> {
-  const metrics = analyzeSprintActivity(input.github, input.jira);
-  const rawSummary = buildRetroRawSummary(input, metrics);
-
-  if (!isAIConfigured()) {
-    return buildRetroFallbackReport(input, metrics);
-  }
-
-  try {
-    return await generateRetroWithAI(rawSummary, input, metrics);
-  } catch (error) {
-    console.error('[prodbeam] AI generation failed for retrospective, using fallback:', error);
-    return buildRetroFallbackReport(input, metrics);
-  }
-}
-
-/**
- * Build a text summary of sprint activity for the AI prompt
- */
-function buildRetroRawSummary(input: RetroReportInput, metrics: SprintMetrics): string {
+export function generateRetrospective(input: RetroReportInput, extras?: ReportExtras): string {
   const { github, jira, sprintName, dateRange } = input;
-  const parts: string[] = [];
+  const metrics = analyzeSprintActivity(github, jira);
+  const trends = extras?.trends;
+  const anomalies = extras?.anomalies;
+  const health = extras?.health;
 
-  parts.push(`**Sprint Retrospective Data: ${sprintName}**`);
-  parts.push(`Period: ${dateRange.from} to ${dateRange.to}`);
-  parts.push(`Developer: ${github.username}`);
-  parts.push('');
-
-  // Sprint metrics
-  parts.push('**Sprint Metrics:**');
-  parts.push(`- Commits: ${metrics.totalCommits}`);
-  parts.push(
-    `- PRs: ${metrics.pullRequests.total} total, ${metrics.pullRequests.merged} merged (${metrics.pullRequests.mergeRate}% merge rate)`
-  );
-  parts.push(`- Code changes: +${metrics.additions}/-${metrics.deletions}`);
-  parts.push(
-    `- Reviews: ${metrics.reviews.total} (${metrics.reviews.approved} approved, ${metrics.reviews.changesRequested} changes requested)`
-  );
-  if (metrics.avgMergeTimeHours !== null) {
-    parts.push(`- Average PR merge time: ${metrics.avgMergeTimeHours} hours`);
-  }
-  parts.push('');
-
-  // Jira completion
-  if (metrics.jira) {
-    parts.push('**Jira Sprint Progress:**');
-    parts.push(
-      `- ${metrics.jira.completed}/${metrics.jira.totalIssues} issues completed (${metrics.jira.completionRate}%)`
-    );
-    parts.push(
-      `- By type: ${Object.entries(metrics.jira.byType)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(', ')}`
-    );
-    parts.push(
-      `- By priority: ${Object.entries(metrics.jira.byPriority)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(', ')}`
-    );
-    parts.push('');
-  }
-
-  // Activity details
-  parts.push(`**Commits (${github.commits.length}):**`);
-  if (github.commits.length > 0) {
-    for (const c of github.commits) {
-      parts.push(`- ${c.message} (${c.sha} in ${c.repo})`);
-    }
-  } else {
-    parts.push('- None');
-  }
-  parts.push('');
-
-  parts.push(`**Pull Requests (${github.pullRequests.length}):**`);
-  if (github.pullRequests.length > 0) {
-    for (const pr of github.pullRequests) {
-      const stats = pr.additions !== undefined ? ` (+${pr.additions}/-${pr.deletions})` : '';
-      parts.push(`- #${pr.number}: ${pr.title} [${pr.state}]${stats} (${pr.repo})`);
-    }
-  } else {
-    parts.push('- None');
-  }
-  parts.push('');
-
-  parts.push(`**Reviews (${github.reviews.length}):**`);
-  if (github.reviews.length > 0) {
-    for (const r of github.reviews) {
-      parts.push(`- PR #${r.pullRequestNumber}: ${r.pullRequestTitle} [${r.state}] (${r.repo})`);
-    }
-  } else {
-    parts.push('- None');
-  }
-
-  if (jira && jira.issues.length > 0) {
-    parts.push('');
-    parts.push(`**Jira Issues (${jira.issues.length}):**`);
-    for (const issue of jira.issues) {
-      parts.push(
-        `- ${issue.key}: ${issue.summary} [${issue.status}] (${issue.priority}, ${issue.issueType})`
-      );
-    }
-  }
-
-  return parts.join('\n');
-}
-
-/**
- * Generate retrospective using Anthropic Claude API
- */
-async function generateRetroWithAI(
-  rawSummary: string,
-  input: RetroReportInput,
-  metrics: SprintMetrics
-): Promise<string> {
-  const anthropic = new Anthropic();
-
-  const completionContext = metrics.jira
-    ? `Sprint completion rate: ${metrics.jira.completionRate}% (${metrics.jira.completed}/${metrics.jira.totalIssues} issues).`
-    : 'No Jira data available for completion tracking.';
-
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 3000,
-    system: `You are an experienced Scrum Master generating sprint retrospective reports.
-
-Rules:
-- Analyze the data objectively — identify patterns, not just list items
-- "What went well" should highlight achievements with supporting metrics
-- "What could improve" should identify bottlenecks from the data (slow merge times, low completion rate, stale PRs)
-- "Action items" should be specific, measurable, and achievable
-- Be professional and constructive — no blame, focus on process improvement
-- Do NOT invent work or issues that aren't in the data
-- Output only the report in Markdown, no extra commentary`,
-
-    messages: [
-      {
-        role: 'user',
-        content: `Generate a sprint retrospective for "${input.sprintName}" (${input.dateRange.from} to ${input.dateRange.to}) for developer "${input.github.username}".
-
-${completionContext}
-
-${rawSummary}
-
-Format:
-# Sprint Retrospective: ${input.sprintName}
-
-## Sprint Summary
-[2-3 sentence overview of the sprint with key metrics]
-
-## What Went Well
-- [achievements backed by data]
-
-## What Could Improve
-- [issues identified from metrics and patterns]
-
-## Action Items
-- [ ] [specific, measurable improvement actions]
-
-## Metrics
-| Metric | Value |
-|--------|-------|
-| ... | ... |`,
-      },
-    ],
-  });
-
-  const textBlock = message.content.find((block) => block.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('No text content in AI response');
-  }
-
-  return textBlock.text;
-}
-
-/**
- * Build a structured retrospective report without AI (fallback)
- */
-function buildRetroFallbackReport(input: RetroReportInput, metrics: SprintMetrics): string {
-  const { github, jira, sprintName, dateRange } = input;
   const parts: string[] = [];
 
   parts.push(`# Sprint Retrospective: ${sprintName}`);
@@ -781,14 +415,105 @@ function buildRetroFallbackReport(input: RetroReportInput, metrics: SprintMetric
     parts.push('_No reviews_');
   }
 
+  // Trends
+  if (trends && trends.length > 0) {
+    parts.push('');
+    renderTrends(parts, trends);
+  }
+
+  // Anomalies
+  if (anomalies && anomalies.length > 0) {
+    parts.push('');
+    renderAnomalies(parts, anomalies);
+  }
+
+  // Team Health
+  if (health) {
+    parts.push('');
+    renderTeamHealth(parts, health);
+  }
+
   parts.push('');
   parts.push('---');
 
-  if (!isAIConfigured()) {
+  return parts.join('\n');
+}
+
+// ─── Trend Rendering ─────────────────────────────────────────
+
+const SEVERITY_ICON: Record<TrendInsight['severity'], string> = {
+  alert: '[!!]',
+  warning: '[!]',
+  info: '[i]',
+};
+
+/**
+ * Render trend insights as a Markdown section.
+ * Mutates the `parts` array by appending lines.
+ */
+function renderTrends(parts: string[], trends: TrendInsight[]): void {
+  parts.push('## Trends vs Previous Period');
+  parts.push('');
+  parts.push('| Metric | Change | Direction | Severity |');
+  parts.push('|--------|--------|-----------|----------|');
+  for (const t of trends) {
+    const arrow = t.direction === 'up' ? 'Up' : t.direction === 'down' ? 'Down' : 'Stable';
+    const sign = t.changePercent > 0 ? '+' : '';
     parts.push(
-      '_Set ANTHROPIC_API_KEY for AI-powered retrospective analysis with "What Went Well", "What Could Improve", and "Action Items"._'
+      `| ${t.metric} | ${sign}${t.changePercent}% | ${arrow} | ${SEVERITY_ICON[t.severity]} ${t.severity} |`
     );
   }
+  parts.push('');
+  for (const t of trends) {
+    parts.push(`- ${SEVERITY_ICON[t.severity]} ${t.message}`);
+  }
+}
 
-  return parts.join('\n');
+const ANOMALY_ICON: Record<Anomaly['severity'], string> = {
+  alert: '[!!]',
+  warning: '[!]',
+  info: '[i]',
+};
+
+/**
+ * Render anomalies as a Markdown section.
+ */
+function renderAnomalies(parts: string[], anomalies: Anomaly[]): void {
+  parts.push('## Insights');
+  parts.push('');
+  for (const a of anomalies) {
+    parts.push(`- ${ANOMALY_ICON[a.severity]} **${a.severity}:** ${a.message}`);
+  }
+}
+
+const TREND_ARROW: Record<string, string> = {
+  up: 'Up',
+  down: 'Down',
+  stable: 'Stable',
+};
+
+/**
+ * Render team health report as a Markdown section.
+ */
+function renderTeamHealth(parts: string[], health: TeamHealthReport): void {
+  parts.push(`## Team Health: ${health.overallScore}/100`);
+  parts.push('');
+  parts.push('| Dimension | Score | Trend |');
+  parts.push('|-----------|-------|-------|');
+  const dims = health.dimensions;
+  parts.push(`| Velocity | ${dims.velocity.score} | ${TREND_ARROW[dims.velocity.trend]} |`);
+  parts.push(`| Throughput | ${dims.throughput.score} | ${TREND_ARROW[dims.throughput.trend]} |`);
+  parts.push(
+    `| Review Coverage | ${dims.reviewCoverage.score} | ${TREND_ARROW[dims.reviewCoverage.trend]} |`
+  );
+  parts.push(`| Issue Flow | ${dims.issueFlow.score} | ${TREND_ARROW[dims.issueFlow.trend]} |`);
+
+  if (health.recommendations.length > 0) {
+    parts.push('');
+    parts.push('### Recommendations');
+    parts.push('');
+    for (const rec of health.recommendations) {
+      parts.push(`- ${rec}`);
+    }
+  }
 }

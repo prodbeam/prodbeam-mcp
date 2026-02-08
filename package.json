@@ -1,11 +1,12 @@
 {
-  "name": "@prodbeam/claude-mcp",
+  "name": "@prodbeam/mcp",
   "version": "0.1.0",
-  "description": "AI-powered daily standups, weekly reports, and sprint retrospectives for Claude Code",
+  "description": "MCP server for AI-powered engineering intelligence — standups, weekly reports, and sprint retrospectives",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "prodbeam-mcp": "./dist/index.js"
+    "prodbeam-mcp": "./dist/index.js",
+    "prodbeam": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
@@ -19,12 +20,13 @@
     "test:watch": "vitest"
   },
   "keywords": [
-    "claude-code",
     "mcp",
+    "mcp-server",
     "standup",
     "reports",
     "retrospective",
     "ai",
+    "engineering-intelligence",
     "scrum",
     "agile",
     "github",
@@ -35,21 +37,22 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/prodbeam/claude-mcp.git"
+    "url": "https://github.com/prodbeam/prodbeam-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/prodbeam/claude-mcp/issues"
+    "url": "https://github.com/prodbeam/prodbeam-mcp/issues"
   },
-  "homepage": "https://prodbeam.com/claude-plugin",
+  "homepage": "https://prodbeam.com",
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@anthropic-ai/sdk": "^0.20.0",
+    "better-sqlite3": "^12.6.2",
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
