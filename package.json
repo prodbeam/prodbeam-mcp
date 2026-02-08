@@ -42,7 +42,7 @@
   "bugs": {
     "url": "https://github.com/prodbeam/prodbeam-mcp/issues"
   },
-  "homepage": "https://prodbeam.com",
+  "homepage": "https://github.com/prodbeam/prodbeam-mcp#readme",
   "engines": {
     "node": ">=18.0.0"
   },
@@ -66,6 +66,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ]
 }

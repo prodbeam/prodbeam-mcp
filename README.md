@@ -1,51 +1,45 @@
 # Prodbeam MCP Server
 
-**Status:** Work in Progress (Pre-release)
-**Target Launch:** March 2026
+Engineering intelligence reports from GitHub and Jira, delivered through any MCP client or the standalone CLI.
+
+- **Daily standups** from your commits, PRs, reviews, and Jira issues
+- **Weekly summaries** with team metrics, repo breakdowns, and insights
+- **Sprint retrospectives** with merge time analysis and completion rates
+- **Team health scoring** with anomaly detection and trend analysis
 
 ---
 
-## What is this?
+## Quick Start
 
-An MCP server that generates AI-powered engineering reports. Works with any MCP client (Claude Code, Cursor, Windsurf, Cline, etc.):
+### Option 1: npx (zero install)
 
-- **Daily standups** from your commits, PRs, and Jira tickets
-- **Weekly reports** with team metrics and insights
-- **Sprint retrospectives** with AI-powered analysis
-
-No browser. No context switching. Reuses your existing GitHub and Jira MCP connections.
-
----
-
-## How It Works
-
-Prodbeam orchestrates your existing MCP servers. It spawns GitHub and Jira MCP servers as subprocesses using the same tokens you already have configured:
-
-```
-Claude Code
-  |
-  +-- Prodbeam MCP (this plugin)
-        |
-        +-- GitHub MCP (your token, spawned as subprocess)
-        +-- Jira MCP (your token, spawned as subprocess)
-        +-- Anthropic Claude API (for AI generation)
+```bash
+claude mcp add prodbeam \
+  -e GITHUB_TOKEN=ghp_YOUR_TOKEN \
+  -e JIRA_HOST=company.atlassian.net \
+  -e JIRA_EMAIL=you@company.com \
+  -e JIRA_API_TOKEN=your_jira_token \
+  -- npx -y @prodbeam/mcp
 ```
 
-No duplicate authentication. No new OAuth flows.
+Then set up your team in a Claude Code session:
 
----
+```
+Set up my prodbeam team called "My Team" with emails: alice@company.com, bob@company.com
+```
 
-## Installation
+### Option 2: Global install with setup wizard
 
-### Prerequisites
+```bash
+npm install -g @prodbeam/mcp
+prodbeam init
+```
 
-- An MCP-compatible client (Claude Code, Cursor, Windsurf, Cline, etc.)
-- A GitHub Personal Access Token ([create one](https://github.com/settings/tokens))
-- Optionally: Jira API Token ([create one](https://id.atlassian.com/manage/api-tokens))
+The wizard detects credentials, validates them, discovers your repos and projects, and registers the MCP server automatically.
 
-### Setup
+### Option 3: MCP client config file
 
-Add to your MCP client config (example for Claude Code `.claude/mcp.json`):
+For Cursor, Windsurf, or other MCP clients that use a JSON config:
 
 ```json
 {
@@ -54,106 +48,116 @@ Add to your MCP client config (example for Claude Code `.claude/mcp.json`):
       "command": "npx",
       "args": ["-y", "@prodbeam/mcp"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "<your-github-token>",
-        "ANTHROPIC_API_KEY": "<your-anthropic-key>"
+        "GITHUB_TOKEN": "ghp_YOUR_TOKEN",
+        "JIRA_HOST": "company.atlassian.net",
+        "JIRA_EMAIL": "you@company.com",
+        "JIRA_API_TOKEN": "your_jira_token"
       }
     }
   }
 }
 ```
 
-**Optional Jira integration** - add these env vars to the same block:
+---
 
-```json
-{
-  "JIRA_API_TOKEN": "<your-jira-token>",
-  "JIRA_EMAIL": "<your-jira-email>",
-  "JIRA_URL": "https://<company>.atlassian.net"
-}
-```
+## Prerequisites
 
-### Already have GitHub/Jira MCP servers?
-
-Use the same tokens. If you have this in your config:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_abc123" }
-    }
-  }
-}
-```
-
-Just copy that same token to the Prodbeam config. No new tokens needed.
-
-### Not sure what you need?
-
-Run the setup check after installing:
-
-```
-claude> use the setup_check tool
-```
-
-Prodbeam will detect which integrations are configured and provide step-by-step instructions for anything missing.
+| Requirement | How to get it |
+|-------------|---------------|
+| Node.js 18+ | [nodejs.org](https://nodejs.org) |
+| GitHub PAT | [Create token](https://github.com/settings/tokens) — scopes: `repo`, `read:user`, `read:org` |
+| Jira API Token | [Create token](https://id.atlassian.com/manage-profile/security/api-tokens) |
 
 ---
 
-## Usage (Coming Soon)
+## Usage
+
+### In any MCP client
+
+Ask naturally — the client invokes the right tool:
+
+| Prompt | Tool |
+|--------|------|
+| "Generate my standup" | `standup` |
+| "Generate a team standup" | `team_standup` |
+| "Generate a weekly summary" | `weekly_summary` |
+| "Generate a weekly summary for last week" | `weekly_summary` (weeksAgo: 1) |
+| "Generate a sprint retro" | `sprint_retro` |
+
+### CLI
 
 ```bash
-# Daily standup
-$ claude
-> use generate_daily_report
-
-# Weekly team summary
-> use generate_weekly_report with team=true
-
-# Sprint retrospective
-> use generate_retrospective with sprint="Sprint 42"
+prodbeam status                           # Check config and credentials
+prodbeam standup                           # Personal standup (last 24h)
+prodbeam standup --email alice@co.com      # Standup for a specific member
+prodbeam team-standup                      # Full team standup
+prodbeam weekly                            # Weekly summary
+prodbeam weekly --weeks-ago 1              # Last week's summary
+prodbeam sprint-retro                      # Sprint retro (auto-detect sprint)
+prodbeam sprint-retro --sprint "Sprint 12" # Specific sprint
 ```
 
 ---
 
-## Features
+## Available Tools
 
-- **MCP-native** - Works with any MCP client
-- **Reuses existing tokens** - Same GitHub/Jira tokens you already have
-- **AI-powered** - Uses Anthropic Claude for natural language reports
-- **Graceful fallback** - Works with GitHub only, Jira is optional
-- **Setup guidance** - Built-in diagnostics if configuration is missing
-- **Open source** - MIT license
+### Setup
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `setup_team` | teamName, emails | One-time onboarding with auto-discovery |
+| `add_member` | email | Add a team member |
+| `remove_member` | email | Remove a team member |
+| `refresh_config` | — | Re-scan repos and sprints |
+| `get_capabilities` | — | Show config status and available tools |
+
+### Reports
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `standup` | email (optional) | Personal daily standup (last 24h) |
+| `team_standup` | — | Full team standup with per-member breakdown |
+| `weekly_summary` | weeksAgo (optional) | Weekly engineering summary with metrics |
+| `sprint_retro` | sprintName (optional) | Sprint retrospective with completion rates |
 
 ---
 
-## Roadmap
+## Architecture
 
-- [ ] **Phase 0** (Feb 2026): Foundation and architecture validation
-- [ ] **Phase 1** (Feb-Mar 2026): Daily reports MVP
-- [ ] **Phase 2** (Mar 2026): Weekly reports with team support
-- [ ] **Phase 3** (Mar 2026): Sprint retrospectives
-- [ ] **v1.0 Launch** (Apr 2026): Public release
+Prodbeam is **self-sufficient** — it fetches data directly from GitHub and Jira APIs. No separate MCP servers or API keys needed.
+
+```
+MCP Client (Claude Code, Cursor, Windsurf, etc.)
+  └── Prodbeam MCP Server (stdio)
+        ├── GitHub REST API (your token)
+        ├── Jira REST API (your token)
+        └── ~/.prodbeam/history.db (local SQLite)
+```
+
+**One tool call = one complete report.** No multi-step orchestration.
+
+### Config directory
+
+All data lives in `~/.prodbeam/`:
+
+| File | Purpose |
+|------|---------|
+| `team.json` | Team members, repos, Jira projects |
+| `credentials.json` | API tokens (600 permissions) |
+| `history.db` | SQLite metrics for trend comparison |
+
+Override location with `PRODBEAM_HOME` env var.
 
 ---
 
 ## Development
 
 ```bash
-# Install dependencies
+git clone https://github.com/prodbeam/prodbeam-mcp.git
+cd prodbeam-mcp
 npm install
-
-# Build
 npm run build
-
-# Watch mode
-npm run dev
-
-# Lint
-npm run lint
-
-# Type check
-npm run type-check
+npm test
 ```
 
 ### Project Structure
@@ -161,43 +165,44 @@ npm run type-check
 ```
 src/
 ├── index.ts              # MCP server entry point
-├── adapters/
-│   └── github-mcp.ts     # GitHub MCP client adapter
-└── types/
-    └── github.ts          # TypeScript type definitions
+├── cli.ts                # Standalone CLI
+├── clients/              # GitHub and Jira REST API clients
+├── commands/             # CLI commands (init wizard)
+├── config/               # Credentials, team config, paths
+├── discovery/            # GitHub/Jira auto-discovery
+├── generators/           # Report generation
+├── history/              # SQLite metrics persistence
+├── insights/             # Anomaly detection, team health, trends
+├── orchestrator/         # Data fetching and time ranges
+└── validators.ts         # Input validation
 ```
+
+### Commands
+
+```bash
+npm run build        # Compile TypeScript
+npm run dev          # Watch mode
+npm test             # Run tests (vitest)
+npm run lint         # Lint (eslint)
+npm run type-check   # Type check (tsc --noEmit)
+```
+
+---
+
+## Documentation
+
+See [docs/prodbeam-mcp-guide.md](docs/prodbeam-mcp-guide.md) for the full setup and usage guide.
 
 ---
 
 ## Contributing
 
-Not accepting contributions yet (pre-release). Once launched, we welcome:
-- Bug reports
-- Feature requests
-- Pull requests
-- Documentation improvements
+Bug reports and feature requests welcome via [GitHub Issues](https://github.com/prodbeam/prodbeam-mcp/issues).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## Part of the Prodbeam Ecosystem
-
-[Prodbeam](https://prodbeam.com) is an AI-powered Engineering Intelligence Platform.
-
-- **Web App**: Full engineering intelligence platform at [prodbeam.com](https://prodbeam.com)
-- **MCP Server**: Engineering intelligence for any MCP client (this repo)
+Pull requests accepted — please follow conventional commit format (`feat:`, `fix:`, `docs:`, etc.).
 
 ---
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file.
-
----
-
-## Links
-
-- Website: [prodbeam.com](https://prodbeam.com)
-- Docs: [prodbeam.com/docs](https://prodbeam.com/docs) (coming soon)
-- Issues: [GitHub Issues](https://github.com/prodbeam/prodbeam-mcp/issues)
+MIT — See [LICENSE](LICENSE).
