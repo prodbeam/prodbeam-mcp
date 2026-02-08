@@ -149,6 +149,8 @@ export class GitHubClient {
       url: pr.html_url,
       additions: pr.additions,
       deletions: pr.deletions,
+      body: pr.body ? pr.body.slice(0, 500) : undefined,
+      labels: pr.labels?.map((l) => l.name),
     }));
   }
 
@@ -175,6 +177,7 @@ export class GitHubClient {
         state: r.state as GitHubReview['state'],
         submittedAt: r.submitted_at,
         repo: `${owner}/${repo}`,
+        body: r.body ? r.body.slice(0, 500) : undefined,
       }));
   }
 

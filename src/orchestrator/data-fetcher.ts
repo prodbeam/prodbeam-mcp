@@ -13,7 +13,7 @@ import type {
   GitHubPullRequest,
   GitHubReview,
 } from '../types/github.js';
-import type { JiraActivity } from '../types/jira.js';
+import type { JiraActivity, JiraComment } from '../types/jira.js';
 import type { TimeRange } from './time-range.js';
 
 /** Maximum PRs per repo to fetch reviews for (limits API calls). */
@@ -186,7 +186,7 @@ export async function fetchSprintJiraActivity(
 export async function detectActiveSprint(
   client: JiraClient,
   projects: string[]
-): Promise<{ name: string; startDate: string; endDate: string } | null> {
+): Promise<{ name: string; startDate: string; endDate: string; goal?: string } | null> {
   for (const project of projects) {
     try {
       const boards = await client.getBoards(project);
@@ -204,6 +204,7 @@ export async function detectActiveSprint(
                 name: best.name,
                 startDate: best.startDate,
                 endDate: best.endDate,
+                goal: best.goal || undefined,
               };
             }
           }
@@ -217,6 +218,35 @@ export async function detectActiveSprint(
   }
 
   return null;
+}
+
+/**
+ * Fetch comments for a list of Jira issue keys.
+ * Limits to maxIssues to control API calls. Returns keyed by issue key.
+ */
+export async function fetchIssueComments(
+  client: JiraClient,
+  issueKeys: string[],
+  maxIssues = 10,
+  maxCommentsPerIssue = 5
+): Promise<Record<string, JiraComment[]>> {
+  const limited = issueKeys.slice(0, maxIssues);
+  const result: Record<string, JiraComment[]> = {};
+
+  const results = await Promise.allSettled(
+    limited.map(async (key) => {
+      const comments = await client.getIssueComments(key, maxCommentsPerIssue);
+      return { key, comments };
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.comments.length > 0) {
+      result[r.value.key] = r.value.comments;
+    }
+  }
+
+  return result;
 }
 
 // ─── Internal Helpers ────────────────────────────────────────

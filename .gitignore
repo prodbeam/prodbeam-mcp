@@ -47,6 +47,9 @@ temp/
 # MCP specific
 .mcp/
 
+# Internal documentation (not for public repo)
+docs/internal/
+
 # Claude Code auto-generated context files
 **/CLAUDE.md
 .claude/

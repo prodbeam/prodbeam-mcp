@@ -10,6 +10,19 @@ export interface RetroReportInput {
   dateRange: { from: string; to: string };
   github: GitHubActivity;
   jira?: JiraActivity;
+  sprintGoal?: string;
+  perMember?: GitHubActivity[];
+}
+
+export interface SprintReviewInput {
+  sprintName: string;
+  dateRange: { from: string; to: string };
+  github: GitHubActivity;
+  jira?: JiraActivity;
+  sprintGoal?: string;
+  perMember?: GitHubActivity[];
+  daysElapsed: number;
+  daysTotal: number;
 }
 
 export interface SprintMetrics {

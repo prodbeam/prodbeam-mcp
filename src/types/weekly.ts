@@ -8,6 +8,7 @@ import type { JiraActivity } from './jira.js';
 export interface WeeklyReportInput {
   github: GitHubActivity;
   jira?: JiraActivity;
+  perMember?: GitHubActivity[];
 }
 
 export interface RepoMetrics {
@@ -44,5 +45,7 @@ export interface WeeklyMetrics {
     commented: number;
   };
   repoBreakdown: RepoMetrics[];
+  avgMergeTimeHours: number | null;
+  prSizeDistribution: { small: number; medium: number; large: number };
   jira?: JiraWeeklyMetrics;
 }

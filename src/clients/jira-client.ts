@@ -15,8 +15,9 @@ import type {
   JiraApiSearchResult,
   JiraApiBoardList,
   JiraApiSprintList,
+  JiraApiCommentList,
 } from './types.js';
-import type { JiraIssue } from '../types/jira.js';
+import type { JiraIssue, JiraComment } from '../types/jira.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -122,6 +123,8 @@ export class JiraClient {
       'issuetype',
       'updated',
       'created',
+      'description',
+      'labels',
     ];
 
     const body = {
@@ -140,14 +143,31 @@ export class JiraClient {
    */
   async getIssue(issueKey: string): Promise<JiraIssue> {
     const issue = await this.get<JiraApiIssue>(
-      `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,status,priority,assignee,issuetype,updated,created`
+      `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,status,priority,assignee,issuetype,updated,created,description,labels`
     );
     return this.mapIssue(issue);
+  }
+
+  /**
+   * Get comments for an issue, most recent first.
+   */
+  async getIssueComments(issueKey: string, maxResults = 5): Promise<JiraComment[]> {
+    const result = await this.get<JiraApiCommentList>(
+      `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?maxResults=${maxResults}&orderBy=-created`
+    );
+    return result.comments.map((c) => ({
+      author: c.author.displayName,
+      body: extractTextFromADF(c.body).slice(0, 500),
+      created: c.created,
+    }));
   }
 
   // ─── Mapping ─────────────────────────────────────────────
 
   private mapIssue(issue: JiraApiIssue): JiraIssue {
+    const desc = issue.fields.description
+      ? extractTextFromADF(issue.fields.description).slice(0, 500)
+      : undefined;
     return {
       key: issue.key,
       summary: issue.fields.summary,
@@ -157,6 +177,9 @@ export class JiraClient {
       issueType: issue.fields.issuetype.name,
       updatedAt: issue.fields.updated,
       url: `${this.baseUrl}/browse/${issue.key}`,
+      description: desc || undefined,
+      labels: issue.fields.labels?.length ? issue.fields.labels : undefined,
+      createdAt: issue.fields.created,
     };
   }
 
@@ -208,4 +231,25 @@ export class JiraClient {
       clearTimeout(timeout);
     }
   }
+}
+
+// ─── ADF Text Extraction ──────────────────────────────────
+
+/**
+ * Extract plain text from Atlassian Document Format (ADF).
+ * Recursively walks the ADF tree collecting text nodes.
+ */
+function extractTextFromADF(adf: unknown): string {
+  if (!adf || typeof adf !== 'object') return '';
+  const node = adf as Record<string, unknown>;
+  if (node['type'] === 'text' && typeof node['text'] === 'string') {
+    return node['text'];
+  }
+  if (Array.isArray(node['content'])) {
+    return (node['content'] as unknown[])
+      .map((child) => extractTextFromADF(child))
+      .join('')
+      .replace(/\n{3,}/g, '\n\n');
+  }
+  return '';
 }

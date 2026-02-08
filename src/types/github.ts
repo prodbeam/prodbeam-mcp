@@ -23,6 +23,8 @@ export interface GitHubPullRequest {
   url: string;
   additions?: number;
   deletions?: number;
+  body?: string;
+  labels?: string[];
 }
 
 export interface GitHubReview {
@@ -32,6 +34,7 @@ export interface GitHubReview {
   state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'PENDING';
   submittedAt: string;
   repo: string;
+  body?: string;
 }
 
 export interface GitHubActivity {

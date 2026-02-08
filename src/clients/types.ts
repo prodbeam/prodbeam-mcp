@@ -58,6 +58,8 @@ export interface GitHubApiPullRequest {
   deletions?: number;
   head: { repo: { full_name: string } | null };
   base: { repo: { full_name: string } | null };
+  body: string | null;
+  labels?: Array<{ name: string }>;
 }
 
 export interface GitHubApiReview {
@@ -66,6 +68,7 @@ export interface GitHubApiReview {
   state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'PENDING' | 'DISMISSED';
   submitted_at: string;
   html_url: string;
+  body: string | null;
 }
 
 export interface GitHubApiSearchResult<T> {
@@ -129,7 +132,23 @@ export interface JiraApiIssue {
     issuetype: { name: string };
     updated: string;
     created: string;
+    description?: unknown;
+    labels?: string[];
   };
+}
+
+export interface JiraApiComment {
+  id: string;
+  author: { displayName: string };
+  body: unknown;
+  created: string;
+}
+
+export interface JiraApiCommentList {
+  comments: JiraApiComment[];
+  total: number;
+  maxResults: number;
+  startAt: number;
 }
 
 export interface JiraApiSearchResult {

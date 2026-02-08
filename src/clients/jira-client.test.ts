@@ -201,6 +201,9 @@ describe('JiraClient', () => {
         issueType: 'Task',
         updatedAt: '2026-02-07T10:00:00Z',
         url: 'https://prodbeam.atlassian.net/browse/PA-94',
+        description: undefined,
+        labels: undefined,
+        createdAt: '2026-01-20T09:00:00Z',
       });
     });
 

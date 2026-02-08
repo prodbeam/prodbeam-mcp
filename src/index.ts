@@ -15,7 +15,12 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import { resolveGitHubCredentials, resolveJiraCredentials } from './config/credentials.js';
 import {
@@ -43,6 +48,7 @@ import {
   generateTeamDailyReport,
   generateWeeklyReport,
   generateRetrospective,
+  generateSprintReview,
 } from './generators/report-generator.js';
 import { HistoryStore } from './history/history-store.js';
 import { buildSnapshot } from './history/snapshot-builder.js';
@@ -53,7 +59,25 @@ import { resolveThresholds } from './config/thresholds.js';
 import type { ReportExtras } from './generators/report-generator.js';
 import type { MemberConfig, TeamConfig } from './config/types.js';
 
-const server = new Server({ name: 'prodbeam', version: '2.0.0' }, { capabilities: { tools: {} } });
+const SERVER_INSTRUCTIONS = `Prodbeam is an engineering intelligence server that generates reports from GitHub and Jira data.
+
+Use prodbeam tools when the user asks about:
+- Daily standups, what they or their team worked on, yesterday's activity → standup or team_standup
+- Weekly engineering summaries, metrics, productivity reports → weekly_summary
+- Sprint retrospectives, retros, sprint reviews, sprint health → sprint_retro or sprint_review
+- Team setup, adding/removing members, configuration → setup_team, add_member, remove_member
+- Refreshing repos/sprints, re-scanning → refresh_config
+- What tools are available, credential status → get_capabilities
+
+Common triggers: "standup", "what did I do", "weekly report", "sprint retro", "sprint review", "team activity", "engineering metrics"`;
+
+const server = new Server(
+  { name: 'prodbeam', version: '2.0.0' },
+  {
+    capabilities: { tools: {}, prompts: {} },
+    instructions: SERVER_INSTRUCTIONS,
+  }
+);
 
 // ─── Tool Definitions ────────────────────────────────────────
 
@@ -123,7 +147,7 @@ server.setRequestHandler(ListToolsRequestSchema, () => {
       {
         name: 'standup',
         description:
-          'Generate a personal daily standup report. Fetches your GitHub commits, PRs, reviews, and Jira issues from the last 24 hours. Requires team setup.',
+          'Generate a personal daily standup report. Fetches your GitHub commits, PRs, reviews, and Jira issues from the last 24 hours. Use when the user asks: "standup", "what did I work on", "my activity", "daily update". Requires team setup.',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -138,7 +162,7 @@ server.setRequestHandler(ListToolsRequestSchema, () => {
       {
         name: 'team_standup',
         description:
-          'Generate a full team standup report. Shows per-member activity from the last 24 hours with aggregate stats.',
+          'Generate a full team standup report. Shows per-member activity from the last 24 hours with aggregate stats. Use when the user asks: "team standup", "what did the team do", "team activity", "everyone\'s update".',
         inputSchema: {
           type: 'object' as const,
           properties: {},
@@ -147,7 +171,7 @@ server.setRequestHandler(ListToolsRequestSchema, () => {
       {
         name: 'weekly_summary',
         description:
-          'Generate a weekly engineering summary with metrics, repo breakdown, and Jira stats. Covers the last 7 days by default.',
+          'Generate a weekly engineering summary with metrics, repo breakdown, and Jira stats. Covers the last 7 days by default. Use when the user asks: "weekly summary", "weekly report", "this week\'s metrics", "engineering summary", "productivity report".',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -161,7 +185,21 @@ server.setRequestHandler(ListToolsRequestSchema, () => {
       {
         name: 'sprint_retro',
         description:
-          'Generate a sprint retrospective report with merge time analysis, completion rates, and Jira metrics. Auto-detects the active sprint from Jira.',
+          'Generate a sprint retrospective report with merge time analysis, completion rates, and Jira metrics. Auto-detects the active sprint from Jira. Use when the user asks: "sprint retro", "retrospective", "sprint review meeting", "how did the sprint go".',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            sprintName: {
+              type: 'string' as const,
+              description: 'Sprint name (optional — auto-detects active sprint if not provided)',
+            },
+          },
+        },
+      },
+      {
+        name: 'sprint_review',
+        description:
+          'Review current sprint progress with deliverables, risks, and developer status. Mid-sprint health check. Use when the user asks: "sprint review", "sprint status", "sprint health", "how is the sprint going", "sprint progress".',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -179,6 +217,112 @@ server.setRequestHandler(ListToolsRequestSchema, () => {
         inputSchema: {
           type: 'object' as const,
           properties: {},
+        },
+      },
+    ],
+  };
+});
+
+// ─── Prompts ─────────────────────────────────────────────────
+
+const PROMPTS = [
+  {
+    name: 'standup',
+    description: 'Generate your personal daily standup report',
+    arguments: [
+      {
+        name: 'email',
+        description: 'Team member email (optional — defaults to first member)',
+        required: false,
+      },
+    ],
+  },
+  {
+    name: 'team-standup',
+    description: "Generate the full team's daily standup report",
+  },
+  {
+    name: 'weekly-summary',
+    description: 'Generate a weekly engineering summary with metrics',
+    arguments: [
+      {
+        name: 'weeksAgo',
+        description: 'Offset in weeks (0 = current, 1 = last week)',
+        required: false,
+      },
+    ],
+  },
+  {
+    name: 'sprint-retro',
+    description: 'Generate a sprint retrospective with what went well, improvements, and action items',
+    arguments: [
+      {
+        name: 'sprintName',
+        description: 'Sprint name (optional — auto-detects active sprint)',
+        required: false,
+      },
+    ],
+  },
+  {
+    name: 'sprint-review',
+    description: 'Review current sprint progress, deliverables, and risks',
+    arguments: [
+      {
+        name: 'sprintName',
+        description: 'Sprint name (optional — auto-detects active sprint)',
+        required: false,
+      },
+    ],
+  },
+];
+
+server.setRequestHandler(ListPromptsRequestSchema, () => {
+  return { prompts: PROMPTS };
+});
+
+server.setRequestHandler(GetPromptRequestSchema, (request) => {
+  const { name, arguments: promptArgs } = request.params;
+  const prompt = PROMPTS.find((p) => p.name === name);
+  if (!prompt) {
+    throw new Error(`Unknown prompt: ${name}`);
+  }
+
+  // Map prompt names to tool calls
+  const toolMap: Record<string, { tool: string; argMap: Record<string, string> }> = {
+    standup: { tool: 'standup', argMap: { email: 'email' } },
+    'team-standup': { tool: 'team_standup', argMap: {} },
+    'weekly-summary': { tool: 'weekly_summary', argMap: { weeksAgo: 'weeksAgo' } },
+    'sprint-retro': { tool: 'sprint_retro', argMap: { sprintName: 'sprintName' } },
+    'sprint-review': { tool: 'sprint_review', argMap: { sprintName: 'sprintName' } },
+  };
+
+  const mapping = toolMap[name];
+  if (!mapping) {
+    throw new Error(`Unknown prompt: ${name}`);
+  }
+
+  // Build the tool call arguments
+  const toolArgs: Record<string, string> = {};
+  if (promptArgs) {
+    for (const [promptKey, toolKey] of Object.entries(mapping.argMap)) {
+      if (promptArgs[promptKey]) {
+        toolArgs[toolKey] = promptArgs[promptKey];
+      }
+    }
+  }
+
+  const argsDescription = Object.keys(toolArgs).length > 0
+    ? ` with ${JSON.stringify(toolArgs)}`
+    : '';
+
+  return {
+    description: prompt.description,
+    messages: [
+      {
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: `Use the prodbeam ${mapping.tool} tool${argsDescription} to generate the report.`,
         },
       },
     ],
@@ -208,6 +352,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleWeeklySummary(args);
       case 'sprint_retro':
         return await handleSprintRetro(args);
+      case 'sprint_review':
+        return await handleSprintReview(args);
       case 'get_capabilities':
         return handleGetCapabilities();
       default:
@@ -735,7 +881,7 @@ async function handleWeeklySummary(
     // Intelligence is best-effort — don't fail the report if DB has issues
   }
 
-  const report = generateWeeklyReport({ github, jira }, extras);
+  const report = generateWeeklyReport({ github, jira, perMember }, extras);
   return { content: [{ type: 'text', text: report }] };
 }
 
@@ -754,6 +900,7 @@ async function handleSprintRetro(
 
   let sprintName = typeof args?.['sprintName'] === 'string' ? args['sprintName'] : undefined;
   let timeRange;
+  let sprintGoal: string | undefined;
 
   // Detect sprint from Jira if not provided
   if (!sprintName && jiraCreds) {
@@ -761,6 +908,7 @@ async function handleSprintRetro(
     const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
     if (activeSprint) {
       sprintName = activeSprint.name;
+      sprintGoal = activeSprint.goal;
       timeRange = sprintTimeRange(activeSprint.startDate, activeSprint.endDate);
     }
   }
@@ -841,7 +989,115 @@ async function handleSprintRetro(
     // Intelligence is best-effort — don't fail the report if DB has issues
   }
 
-  const report = generateRetrospective({ github, jira, sprintName, dateRange }, extras);
+  const report = generateRetrospective(
+    { github, jira, sprintName, dateRange, sprintGoal, perMember },
+    extras
+  );
+  return { content: [{ type: 'text', text: report }] };
+}
+
+// ─── Sprint Review ──────────────────────────────────────────
+
+async function handleSprintReview(
+  args: Record<string, unknown> | undefined
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const config = requireTeamConfig();
+  const ghCreds = resolveGitHubCredentials();
+  const jiraCreds = resolveJiraCredentials();
+
+  if (!ghCreds) {
+    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
+  }
+
+  let sprintName = typeof args?.['sprintName'] === 'string' ? args['sprintName'] : undefined;
+  let timeRange;
+  let sprintGoal: string | undefined;
+  let sprintStartDate: string | undefined;
+  let sprintEndDate: string | undefined;
+
+  // Detect sprint from Jira if not provided
+  if (!sprintName && jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
+    if (activeSprint) {
+      sprintName = activeSprint.name;
+      sprintGoal = activeSprint.goal;
+      sprintStartDate = activeSprint.startDate;
+      sprintEndDate = activeSprint.endDate;
+      timeRange = sprintTimeRange(activeSprint.startDate, activeSprint.endDate);
+    }
+  }
+
+  if (!sprintName) {
+    throw new Error(
+      'No active sprint detected. Provide a sprintName parameter or ensure Jira credentials are configured.'
+    );
+  }
+
+  if (!timeRange) {
+    timeRange = weeklyTimeRange(0);
+    const from = new Date(new Date(timeRange.to).getTime() - 14 * 24 * 60 * 60 * 1000);
+    timeRange = { from: from.toISOString(), to: timeRange.to };
+  }
+
+  const ghClient = new GitHubClient(ghCreds.token);
+  const membersWithGH = config.team.members.filter((m) => m.github);
+  const usernames = membersWithGH.map((m) => m.github!);
+
+  const perMember = await fetchTeamGitHubActivity(
+    ghClient,
+    usernames,
+    config.github.repos,
+    timeRange
+  );
+
+  const github = mergeGitHubActivities(perMember, config.team.name, timeRange);
+
+  let jira;
+  if (jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    jira = await fetchSprintJiraActivity(jiraClient, sprintName, timeRange);
+  }
+
+  const dateRange = {
+    from: timeRange.from.split('T')[0]!,
+    to: timeRange.to.split('T')[0]!,
+  };
+
+  // Calculate sprint days
+  const now = new Date();
+  const start = sprintStartDate ? new Date(sprintStartDate) : new Date(timeRange.from);
+  const end = sprintEndDate ? new Date(sprintEndDate) : new Date(timeRange.to);
+  const daysElapsed = Math.max(
+    0,
+    Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+  );
+  const daysTotal = Math.max(
+    1,
+    Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+  );
+
+  // Intelligence
+  const thresholds = resolveThresholds(config.settings.thresholds);
+  const extras: ReportExtras = {};
+  try {
+    const store = new HistoryStore();
+    extras.anomalies = detectAnomalies({
+      pullRequests: github.pullRequests,
+      reviews: github.reviews,
+      jiraIssues: jira?.issues ?? [],
+      memberActivity: buildMemberActivity(perMember),
+      thresholds,
+    });
+    store.close();
+  } catch {
+    // Intelligence is best-effort
+  }
+
+  const report = generateSprintReview(
+    { github, jira, sprintName, dateRange, sprintGoal, perMember, daysElapsed, daysTotal },
+    extras
+  );
   return { content: [{ type: 'text', text: report }] };
 }
 
@@ -1051,6 +1307,7 @@ function handleGetCapabilities(): { content: Array<{ type: 'text'; text: string 
   parts.push('- **team_standup** — Full team standup (last 24h)');
   parts.push('- **weekly_summary** — Week-in-review with metrics');
   parts.push('- **sprint_retro** — Sprint retrospective with completion rates');
+  parts.push('- **sprint_review** — Mid-sprint health check with risks and progress');
 
   return { content: [{ type: 'text', text: parts.join('\n') }] };
 }

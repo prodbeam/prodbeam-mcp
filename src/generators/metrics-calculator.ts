@@ -44,6 +44,15 @@ export function calculateWeeklyMetrics(github: GitHubActivity, jira?: JiraActivi
   let totalAdditions = 0;
   let totalDeletions = 0;
 
+  // Merge time tracking
+  let totalMergeTimeMs = 0;
+  let mergedWithTimestamps = 0;
+
+  // PR size distribution
+  let prSmall = 0;
+  let prMedium = 0;
+  let prLarge = 0;
+
   for (const pr of github.pullRequests) {
     const r = getRepo(pr.repo);
     r.pullRequests++;
@@ -51,6 +60,14 @@ export function calculateWeeklyMetrics(github: GitHubActivity, jira?: JiraActivi
     if (pr.state === 'merged') {
       prMerged++;
       r.merged++;
+      if (pr.createdAt && pr.mergedAt) {
+        const created = new Date(pr.createdAt).getTime();
+        const merged = new Date(pr.mergedAt).getTime();
+        if (!isNaN(created) && !isNaN(merged) && merged > created) {
+          totalMergeTimeMs += merged - created;
+          mergedWithTimestamps++;
+        }
+      }
     } else if (pr.state === 'open') {
       prOpen++;
     } else {
@@ -61,6 +78,16 @@ export function calculateWeeklyMetrics(github: GitHubActivity, jira?: JiraActivi
     totalDeletions += pr.deletions ?? 0;
     r.additions += pr.additions ?? 0;
     r.deletions += pr.deletions ?? 0;
+
+    // Classify PR size by total lines changed
+    const linesChanged = (pr.additions ?? 0) + (pr.deletions ?? 0);
+    if (linesChanged <= 100) {
+      prSmall++;
+    } else if (linesChanged <= 500) {
+      prMedium++;
+    } else {
+      prLarge++;
+    }
   }
 
   // Reviews
@@ -83,6 +110,12 @@ export function calculateWeeklyMetrics(github: GitHubActivity, jira?: JiraActivi
     return totalB - totalA;
   });
 
+  // Average merge time in hours
+  const avgMergeTimeHours =
+    mergedWithTimestamps > 0
+      ? Math.round((totalMergeTimeMs / mergedWithTimestamps / (1000 * 60 * 60)) * 10) / 10
+      : null;
+
   const metrics: WeeklyMetrics = {
     totalCommits: github.commits.length,
     pullRequests: {
@@ -100,6 +133,8 @@ export function calculateWeeklyMetrics(github: GitHubActivity, jira?: JiraActivi
       commented,
     },
     repoBreakdown,
+    avgMergeTimeHours,
+    prSizeDistribution: { small: prSmall, medium: prMedium, large: prLarge },
   };
 
   if (jira && jira.issues.length > 0) {

@@ -33,6 +33,7 @@ import {
   generateTeamDailyReport,
   generateWeeklyReport,
   generateRetrospective,
+  generateSprintReview,
 } from './generators/report-generator.js';
 import type { TeamConfig } from './config/types.js';
 
@@ -183,12 +184,14 @@ async function runSprintRetro(flags: Record<string, string>): Promise<string> {
 
   let sprintName = flags['sprint'];
   let timeRange;
+  let sprintGoal: string | undefined;
 
   if (!sprintName && jiraCreds) {
     const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
     const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
     if (activeSprint) {
       sprintName = activeSprint.name;
+      sprintGoal = activeSprint.goal;
       timeRange = sprintTimeRange(activeSprint.startDate, activeSprint.endDate);
     }
   }
@@ -233,7 +236,94 @@ async function runSprintRetro(flags: Record<string, string>): Promise<string> {
     to: timeRange.to.split('T')[0]!,
   };
 
-  return generateRetrospective({ github, jira, sprintName, dateRange });
+  return generateRetrospective({ github, jira, sprintName, dateRange, sprintGoal, perMember });
+}
+
+async function runSprintReview(flags: Record<string, string>): Promise<string> {
+  const config = requireConfig();
+  const ghCreds = requireGitHubCreds();
+  const jiraCreds = resolveJiraCredentials();
+
+  let sprintName = flags['sprint'];
+  let timeRange;
+  let sprintGoal: string | undefined;
+  let sprintStartDate: string | undefined;
+  let sprintEndDate: string | undefined;
+
+  if (!sprintName && jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
+    if (activeSprint) {
+      sprintName = activeSprint.name;
+      sprintGoal = activeSprint.goal;
+      sprintStartDate = activeSprint.startDate;
+      sprintEndDate = activeSprint.endDate;
+      timeRange = sprintTimeRange(activeSprint.startDate, activeSprint.endDate);
+    }
+  }
+
+  if (!sprintName) {
+    throw new Error('No active sprint detected. Use --sprint "Sprint Name"');
+  }
+
+  if (!timeRange) {
+    const base = weeklyTimeRange(0);
+    const from = new Date(new Date(base.to).getTime() - 14 * 24 * 60 * 60 * 1000);
+    timeRange = { from: from.toISOString(), to: base.to };
+  }
+
+  const ghClient = new GitHubClient(ghCreds.token);
+  const membersWithGH = config.team.members.filter((m) => m.github);
+  const usernames = membersWithGH.map((m) => m.github!);
+
+  const perMember = await fetchTeamGitHubActivity(
+    ghClient,
+    usernames,
+    config.github.repos,
+    timeRange
+  );
+
+  const github = {
+    username: config.team.name,
+    commits: perMember.flatMap((a) => a.commits),
+    pullRequests: perMember.flatMap((a) => a.pullRequests),
+    reviews: perMember.flatMap((a) => a.reviews),
+    timeRange,
+  };
+
+  let jira;
+  if (jiraCreds) {
+    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+    jira = await fetchSprintJiraActivity(jiraClient, sprintName, timeRange);
+  }
+
+  const dateRange = {
+    from: timeRange.from.split('T')[0]!,
+    to: timeRange.to.split('T')[0]!,
+  };
+
+  const now = new Date();
+  const start = sprintStartDate ? new Date(sprintStartDate) : new Date(timeRange.from);
+  const end = sprintEndDate ? new Date(sprintEndDate) : new Date(timeRange.to);
+  const daysElapsed = Math.max(
+    0,
+    Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+  );
+  const daysTotal = Math.max(
+    1,
+    Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+  );
+
+  return generateSprintReview({
+    github,
+    jira,
+    sprintName,
+    dateRange,
+    sprintGoal,
+    perMember,
+    daysElapsed,
+    daysTotal,
+  });
 }
 
 function runStatus(): string {
@@ -282,6 +372,7 @@ Commands:
   team-standup    Full team standup (last 24h)
   weekly          Weekly engineering summary
   sprint-retro    Sprint retrospective
+  sprint-review   Mid-sprint health check
   status          Show configuration status
   help            Show this help message
 
@@ -346,6 +437,9 @@ async function main() {
         break;
       case 'sprint-retro':
         output = await runSprintRetro(flags);
+        break;
+      case 'sprint-review':
+        output = await runSprintReview(flags);
         break;
       case 'status':
         output = runStatus();
