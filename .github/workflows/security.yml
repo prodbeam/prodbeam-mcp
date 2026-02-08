@@ -3,19 +3,34 @@ name: Security
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  schedule:
+    # CodeQL runs weekly on Mondays at 6am UTC
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
   security-events: write
 
 jobs:
-  dependency-audit:
-    name: Dependency Audit
+  security-checks:
+    name: Security Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -26,24 +41,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run npm audit
+      - name: Dependency audit
         run: npm audit --audit-level=high
 
-  secret-scan:
-    name: Secret Scanning
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: License compliance
+        run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0;SSPL-1.0;EUPL-1.1"
 
-      - name: Gitleaks scan
+      - name: Secret scanning
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # CodeQL runs only on main pushes and weekly schedule (expensive)
   codeql:
     name: CodeQL Analysis
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,21 +70,3 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
-
-  license-check:
-    name: License Compliance
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check licenses
-        run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0;SSPL-1.0;EUPL-1.1"

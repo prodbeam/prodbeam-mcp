@@ -3,15 +3,30 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/dependabot.yml"
+      - ".github/labeler.yml"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/dependabot.yml"
+      - ".github/labeler.yml"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        # Full matrix on main, single version on PRs
+        node-version: ${{ github.event_name == 'push' && fromJSON('[18, 20, 22]') || fromJSON('[20]') }}
 
     steps:
       - uses: actions/checkout@v4
