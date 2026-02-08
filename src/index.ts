@@ -254,7 +254,8 @@ const PROMPTS = [
   },
   {
     name: 'sprint-retro',
-    description: 'Generate a sprint retrospective with what went well, improvements, and action items',
+    description:
+      'Generate a sprint retrospective with what went well, improvements, and action items',
     arguments: [
       {
         name: 'sprintName',
@@ -311,9 +312,8 @@ server.setRequestHandler(GetPromptRequestSchema, (request) => {
     }
   }
 
-  const argsDescription = Object.keys(toolArgs).length > 0
-    ? ` with ${JSON.stringify(toolArgs)}`
-    : '';
+  const argsDescription =
+    Object.keys(toolArgs).length > 0 ? ` with ${JSON.stringify(toolArgs)}` : '';
 
   return {
     description: prompt.description,

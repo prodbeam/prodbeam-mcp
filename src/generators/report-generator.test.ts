@@ -7,7 +7,6 @@ import {
   generateSprintReview,
 } from './report-generator.js';
 import type { GitHubActivity } from '../types/github.js';
-import type { JiraActivity } from '../types/jira.js';
 import type { TrendInsight } from '../insights/types.js';
 
 describe('report-generator', () => {
@@ -883,18 +882,68 @@ describe('report-generator', () => {
           },
           jira: {
             issues: [
-              { key: 'P-1', summary: 'T1', status: 'Done', priority: 'High', assignee: 'u', issueType: 'Story', updatedAt: '', url: '' },
-              { key: 'P-2', summary: 'T2', status: 'In Progress', priority: 'Medium', assignee: 'u', issueType: 'Bug', updatedAt: '', url: '' },
-              { key: 'P-3', summary: 'T3', status: 'To Do', priority: 'Low', assignee: 'u', issueType: 'Task', updatedAt: '', url: '' },
-              { key: 'P-4', summary: 'T4', status: 'To Do', priority: 'Low', assignee: 'u', issueType: 'Task', updatedAt: '', url: '' },
-              { key: 'P-5', summary: 'T5', status: 'To Do', priority: 'Low', assignee: 'u', issueType: 'Task', updatedAt: '', url: '' },
+              {
+                key: 'P-1',
+                summary: 'T1',
+                status: 'Done',
+                priority: 'High',
+                assignee: 'u',
+                issueType: 'Story',
+                updatedAt: '',
+                url: '',
+              },
+              {
+                key: 'P-2',
+                summary: 'T2',
+                status: 'In Progress',
+                priority: 'Medium',
+                assignee: 'u',
+                issueType: 'Bug',
+                updatedAt: '',
+                url: '',
+              },
+              {
+                key: 'P-3',
+                summary: 'T3',
+                status: 'To Do',
+                priority: 'Low',
+                assignee: 'u',
+                issueType: 'Task',
+                updatedAt: '',
+                url: '',
+              },
+              {
+                key: 'P-4',
+                summary: 'T4',
+                status: 'To Do',
+                priority: 'Low',
+                assignee: 'u',
+                issueType: 'Task',
+                updatedAt: '',
+                url: '',
+              },
+              {
+                key: 'P-5',
+                summary: 'T5',
+                status: 'To Do',
+                priority: 'Low',
+                assignee: 'u',
+                issueType: 'Task',
+                updatedAt: '',
+                url: '',
+              },
             ],
             timeRange: { from: '', to: '' },
           },
         },
         {
           anomalies: [
-            { type: 'stale_pr', severity: 'alert', message: 'PR #10 stale', details: { prNumber: 10, ageDays: 5 } },
+            {
+              type: 'stale_pr',
+              severity: 'alert',
+              message: 'PR #10 stale',
+              details: { prNumber: 10, ageDays: 5 },
+            },
           ],
         }
       );
@@ -918,15 +967,20 @@ describe('report-generator', () => {
             commits: [],
             pullRequests: [],
             reviews: [
-              { pullRequestNumber: 1, pullRequestTitle: 'PR', author: 'dev', state: 'COMMENTED', submittedAt: '', repo: 'org/app' },
+              {
+                pullRequestNumber: 1,
+                pullRequestTitle: 'PR',
+                author: 'dev',
+                state: 'COMMENTED',
+                submittedAt: '',
+                repo: 'org/app',
+              },
             ],
             timeRange: { from: '', to: '' },
           },
         },
         {
-          anomalies: [
-            { type: 'stale_pr', severity: 'alert', message: 'Stale PR', details: {} },
-          ],
+          anomalies: [{ type: 'stale_pr', severity: 'alert', message: 'Stale PR', details: {} }],
         }
       );
 
@@ -987,7 +1041,14 @@ describe('report-generator', () => {
             commits: [],
             pullRequests: [],
             reviews: [
-              { pullRequestNumber: 1, pullRequestTitle: 'Feature X', author: 'bob', state: 'APPROVED', submittedAt: '', repo: 'org/app' },
+              {
+                pullRequestNumber: 1,
+                pullRequestTitle: 'Feature X',
+                author: 'bob',
+                state: 'APPROVED',
+                submittedAt: '',
+                repo: 'org/app',
+              },
             ],
             timeRange: { from: '', to: '' },
           },
@@ -1186,10 +1247,46 @@ describe('report-generator', () => {
         },
         jira: {
           issues: [
-            { key: 'P-1', summary: 'S1', status: 'Done', priority: 'High', assignee: 'u', issueType: 'Story', updatedAt: '', url: '' },
-            { key: 'P-2', summary: 'S2', status: 'Done', priority: 'High', assignee: 'u', issueType: 'Story', updatedAt: '', url: '' },
-            { key: 'P-3', summary: 'B1', status: 'Done', priority: 'High', assignee: 'u', issueType: 'Bug', updatedAt: '', url: '' },
-            { key: 'P-4', summary: 'T1', status: 'In Progress', priority: 'Low', assignee: 'u', issueType: 'Task', updatedAt: '', url: '' },
+            {
+              key: 'P-1',
+              summary: 'S1',
+              status: 'Done',
+              priority: 'High',
+              assignee: 'u',
+              issueType: 'Story',
+              updatedAt: '',
+              url: '',
+            },
+            {
+              key: 'P-2',
+              summary: 'S2',
+              status: 'Done',
+              priority: 'High',
+              assignee: 'u',
+              issueType: 'Story',
+              updatedAt: '',
+              url: '',
+            },
+            {
+              key: 'P-3',
+              summary: 'B1',
+              status: 'Done',
+              priority: 'High',
+              assignee: 'u',
+              issueType: 'Bug',
+              updatedAt: '',
+              url: '',
+            },
+            {
+              key: 'P-4',
+              summary: 'T1',
+              status: 'In Progress',
+              priority: 'Low',
+              assignee: 'u',
+              issueType: 'Task',
+              updatedAt: '',
+              url: '',
+            },
           ],
           timeRange: { from: '', to: '' },
         },
@@ -1258,9 +1355,36 @@ describe('report-generator', () => {
         },
         jira: {
           issues: [
-            { key: 'P-1', summary: 'Done task', status: 'Done', priority: 'High', assignee: 'dev', issueType: 'Story', updatedAt: '', url: '' },
-            { key: 'P-2', summary: 'WIP task', status: 'In Progress', priority: 'Medium', assignee: 'dev', issueType: 'Bug', updatedAt: '', url: '' },
-            { key: 'P-3', summary: 'Not started', status: 'To Do', priority: 'Low', assignee: 'dev', issueType: 'Task', updatedAt: '', url: '' },
+            {
+              key: 'P-1',
+              summary: 'Done task',
+              status: 'Done',
+              priority: 'High',
+              assignee: 'dev',
+              issueType: 'Story',
+              updatedAt: '',
+              url: '',
+            },
+            {
+              key: 'P-2',
+              summary: 'WIP task',
+              status: 'In Progress',
+              priority: 'Medium',
+              assignee: 'dev',
+              issueType: 'Bug',
+              updatedAt: '',
+              url: '',
+            },
+            {
+              key: 'P-3',
+              summary: 'Not started',
+              status: 'To Do',
+              priority: 'Low',
+              assignee: 'dev',
+              issueType: 'Task',
+              updatedAt: '',
+              url: '',
+            },
           ],
           timeRange: { from: '', to: '' },
         },
@@ -1326,7 +1450,16 @@ describe('report-generator', () => {
         },
         jira: {
           issues: [
-            { key: 'PROJ-10', summary: 'Payment API endpoint', status: 'Done', priority: 'High', assignee: 'dev', issueType: 'Story', updatedAt: '', url: '' },
+            {
+              key: 'PROJ-10',
+              summary: 'Payment API endpoint',
+              status: 'Done',
+              priority: 'High',
+              assignee: 'dev',
+              issueType: 'Story',
+              updatedAt: '',
+              url: '',
+            },
           ],
           timeRange: { from: '', to: '' },
         },
@@ -1354,17 +1487,42 @@ describe('report-generator', () => {
           },
           jira: {
             issues: [
-              { key: 'P-1', summary: 'Done', status: 'Done', priority: 'High', assignee: 'u', issueType: 'Story', updatedAt: '', url: '' },
-              { key: 'P-2', summary: 'WIP', status: 'In Progress', priority: 'Medium', assignee: 'u', issueType: 'Bug', updatedAt: '', url: '' },
-              { key: 'P-3', summary: 'Todo', status: 'To Do', priority: 'Low', assignee: 'u', issueType: 'Task', updatedAt: '', url: '' },
+              {
+                key: 'P-1',
+                summary: 'Done',
+                status: 'Done',
+                priority: 'High',
+                assignee: 'u',
+                issueType: 'Story',
+                updatedAt: '',
+                url: '',
+              },
+              {
+                key: 'P-2',
+                summary: 'WIP',
+                status: 'In Progress',
+                priority: 'Medium',
+                assignee: 'u',
+                issueType: 'Bug',
+                updatedAt: '',
+                url: '',
+              },
+              {
+                key: 'P-3',
+                summary: 'Todo',
+                status: 'To Do',
+                priority: 'Low',
+                assignee: 'u',
+                issueType: 'Task',
+                updatedAt: '',
+                url: '',
+              },
             ],
             timeRange: { from: '', to: '' },
           },
         },
         {
-          anomalies: [
-            { type: 'stale_pr', severity: 'alert', message: 'PR stale', details: {} },
-          ],
+          anomalies: [{ type: 'stale_pr', severity: 'alert', message: 'PR stale', details: {} }],
         }
       );
 
@@ -1393,10 +1551,27 @@ describe('report-generator', () => {
             username: 'alice',
             commits: [],
             pullRequests: [
-              { number: 1, title: 'A', state: 'merged', author: 'alice', createdAt: '', updatedAt: '', mergedAt: '', repo: 'org/app', url: '' },
+              {
+                number: 1,
+                title: 'A',
+                state: 'merged',
+                author: 'alice',
+                createdAt: '',
+                updatedAt: '',
+                mergedAt: '',
+                repo: 'org/app',
+                url: '',
+              },
             ],
             reviews: [
-              { pullRequestNumber: 2, pullRequestTitle: 'B', author: 'alice', state: 'APPROVED', submittedAt: '', repo: 'org/app' },
+              {
+                pullRequestNumber: 2,
+                pullRequestTitle: 'B',
+                author: 'alice',
+                state: 'APPROVED',
+                submittedAt: '',
+                repo: 'org/app',
+              },
             ],
             timeRange: { from: '', to: '' },
           },

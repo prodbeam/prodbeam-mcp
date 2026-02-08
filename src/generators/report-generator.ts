@@ -139,9 +139,7 @@ export function generateDailyReport(input: DailyReportInput): string {
       parts.push('## Focus Areas');
       parts.push('');
       for (const theme of themes) {
-        const issueList = theme.issues
-          .map((i) => `${i.key} (${i.summary})`)
-          .join(', ');
+        const issueList = theme.issues.map((i) => `${i.key} (${i.summary})`).join(', ');
         parts.push(`- **${theme.name}:** ${issueList} [${theme.issues[0]!.status}]`);
       }
       parts.push('');
@@ -857,7 +855,9 @@ export function generateSprintReview(input: SprintReviewInput, extras?: ReportEx
   }
   const staleIssues = anomalies.filter((a) => a.type === 'stale_issue');
   if (staleIssues.length > 0) {
-    risks.push(`${staleIssues.length} high-priority issue${staleIssues.length === 1 ? '' : 's'} stalled`);
+    risks.push(
+      `${staleIssues.length} high-priority issue${staleIssues.length === 1 ? '' : 's'} stalled`
+    );
   }
 
   if (risks.length > 0) {
@@ -995,9 +995,7 @@ function renderDeveloperSummaries(parts: string[], insights: ContentInsights): v
     parts.push('');
     parts.push('| Commits | PRs Authored | PRs Merged | Reviews Given |');
     parts.push('|---------|-------------|------------|---------------|');
-    parts.push(
-      `| ${dev.commits} | ${dev.prsAuthored} | ${dev.prsMerged} | ${dev.reviewsGiven} |`
-    );
+    parts.push(`| ${dev.commits} | ${dev.prsAuthored} | ${dev.prsMerged} | ${dev.reviewsGiven} |`);
     parts.push('');
 
     if (dev.keyDeliverables.length > 0) {

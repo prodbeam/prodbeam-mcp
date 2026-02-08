@@ -50,10 +50,7 @@ const JIRA_KEY_PATTERN = /\b([A-Z][A-Z0-9]+-\d+)\b/;
 /**
  * Link PRs to Jira issues by extracting issue keys from PR titles.
  */
-export function linkPRsToJira(
-  prs: GitHubPullRequest[],
-  jiraIssues: JiraIssue[]
-): PrJiraLink[] {
+export function linkPRsToJira(prs: GitHubPullRequest[], jiraIssues: JiraIssue[]): PrJiraLink[] {
   const issueMap = new Map(jiraIssues.map((i) => [i.key, i]));
 
   return prs.map((pr) => {
@@ -85,7 +82,11 @@ export function generateAccomplishments(
 
   // Linked items: show both PR and Jira context together
   for (const link of links) {
-    if (link.pr.state === 'merged' && link.jiraIssue && DONE_STATUSES.has(link.jiraIssue.status.toLowerCase())) {
+    if (
+      link.pr.state === 'merged' &&
+      link.jiraIssue &&
+      DONE_STATUSES.has(link.jiraIssue.status.toLowerCase())
+    ) {
       accomplishments.push(
         `${link.jiraKey}: ${link.jiraIssue.summary} [${link.jiraIssue.status}] → PR #${link.pr.number}`
       );
@@ -133,25 +134,19 @@ export function generateWentWell(
 
     // High completion
     if (metrics.jira && metrics.jira.completionRate > 70) {
-      items.push(
-        `Strong sprint execution: ${metrics.jira.completionRate}% completion rate`
-      );
+      items.push(`Strong sprint execution: ${metrics.jira.completionRate}% completion rate`);
     }
 
     // Good merge rate
     if (metrics.pullRequests.mergeRate > 80) {
-      items.push(
-        `Healthy PR throughput: ${metrics.pullRequests.mergeRate}% merge rate`
-      );
+      items.push(`Healthy PR throughput: ${metrics.pullRequests.mergeRate}% merge rate`);
     }
   }
 
   // Accomplishments count
   if (accomplishments.length > 0) {
     const top = accomplishments.slice(0, 3).map((a) => a.split(' → ')[0]!);
-    items.push(
-      `Delivered ${accomplishments.length} items including ${top.join(', ')}`
-    );
+    items.push(`Delivered ${accomplishments.length} items including ${top.join(', ')}`);
   }
 
   // No stale issues (absence of stale_issue anomalies)
@@ -179,8 +174,8 @@ export function generateNeedsImprovement(
   const stalePRs = anomalies.filter((a) => a.type === 'stale_pr');
   if (stalePRs.length > 0) {
     const titles = stalePRs.slice(0, 3).map((a) => {
-      const num = (a.details as Record<string, unknown>)['prNumber'];
-      const days = (a.details as Record<string, unknown>)['ageDays'];
+      const num = String(a.details['prNumber'] ?? '');
+      const days = String(a.details['ageDays'] ?? '');
       return `#${num} (${days}d)`;
     });
     items.push(
@@ -192,9 +187,7 @@ export function generateNeedsImprovement(
   if (reviews.length > 0) {
     const approvals = reviews.filter((r) => r.state === 'APPROVED').length;
     if (approvals === 0) {
-      items.push(
-        `All ${reviews.length} reviews were COMMENTED — no formal approvals`
-      );
+      items.push(`All ${reviews.length} reviews were COMMENTED — no formal approvals`);
     }
   }
 
@@ -203,17 +196,13 @@ export function generateNeedsImprovement(
     const carryover = metrics.jira.totalIssues - metrics.jira.completed;
     const carryoverPct = Math.round((carryover / metrics.jira.totalIssues) * 100);
     if (carryoverPct > 30) {
-      items.push(
-        `${carryoverPct}% carryover (${carryover} issues) into next sprint`
-      );
+      items.push(`${carryoverPct}% carryover (${carryover} issues) into next sprint`);
     }
   }
 
   // Low completion
   if (metrics?.jira && metrics.jira.completionRate < 50) {
-    items.push(
-      `Only ${metrics.jira.completionRate}% of sprint scope completed`
-    );
+    items.push(`Only ${metrics.jira.completionRate}% of sprint scope completed`);
   }
 
   // Review imbalance
@@ -277,9 +266,7 @@ export function generateActionItems(
 /**
  * Group Jira issues by type to show investment distribution.
  */
-export function calculateInvestmentBalance(
-  jiraIssues: JiraIssue[]
-): Record<string, number> {
+export function calculateInvestmentBalance(jiraIssues: JiraIssue[]): Record<string, number> {
   const balance: Record<string, number> = {};
   for (const issue of jiraIssues) {
     balance[issue.issueType] = (balance[issue.issueType] ?? 0) + 1;
@@ -306,9 +293,7 @@ export function buildDeveloperSummaries(
     for (const pr of mergedPRs) {
       const link = links.find((l) => l.pr.number === pr.number && l.pr.repo === pr.repo);
       if (link?.jiraIssue) {
-        keyDeliverables.push(
-          `${link.jiraKey}: ${link.jiraIssue.summary} → PR #${pr.number}`
-        );
+        keyDeliverables.push(`${link.jiraKey}: ${link.jiraIssue.summary} → PR #${pr.number}`);
       } else {
         keyDeliverables.push(`PR #${pr.number}: ${pr.title}`);
       }
@@ -319,9 +304,7 @@ export function buildDeveloperSummaries(
     for (const pr of openPRs) {
       const link = links.find((l) => l.pr.number === pr.number && l.pr.repo === pr.repo);
       if (link?.jiraIssue) {
-        inProgress.push(
-          `${link.jiraKey}: ${link.jiraIssue.summary} → PR #${pr.number}`
-        );
+        inProgress.push(`${link.jiraKey}: ${link.jiraIssue.summary} → PR #${pr.number}`);
       } else {
         inProgress.push(`PR #${pr.number}: ${pr.title}`);
       }
@@ -366,9 +349,7 @@ export interface GenerateContentInsightsInput {
 /**
  * Generate all content insights in one call.
  */
-export function generateContentInsights(
-  input: GenerateContentInsightsInput
-): ContentInsights {
+export function generateContentInsights(input: GenerateContentInsightsInput): ContentInsights {
   const { github, jiraIssues, anomalies, metrics, perMember, sprintGoal } = input;
 
   const links = linkPRsToJira(github.pullRequests, jiraIssues);
@@ -377,16 +358,10 @@ export function generateContentInsights(
 
   const accomplishments = generateAccomplishments(mergedPRs, doneIssues, links);
   const wentWell = generateWentWell(metrics, anomalies, accomplishments);
-  const needsImprovement = generateNeedsImprovement(
-    metrics, anomalies, github.reviews
-  );
-  const actionItems = generateActionItems(
-    anomalies, github.reviews, metrics
-  );
+  const needsImprovement = generateNeedsImprovement(metrics, anomalies, github.reviews);
+  const actionItems = generateActionItems(anomalies, github.reviews, metrics);
   const investmentBalance = calculateInvestmentBalance(jiraIssues);
-  const developerSummaries = perMember
-    ? buildDeveloperSummaries(perMember, jiraIssues, links)
-    : [];
+  const developerSummaries = perMember ? buildDeveloperSummaries(perMember, jiraIssues, links) : [];
 
   return {
     prJiraLinks: links,
