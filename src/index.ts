@@ -22,7 +22,7 @@ import {
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { resolveGitHubCredentials, resolveJiraCredentials } from './config/credentials.js';
+// resolveGitHubCredentials and resolveJiraCredentials are now called internally by auth-provider
 import {
   readTeamConfig,
   writeTeamConfig,
@@ -32,6 +32,12 @@ import {
 import { resolveConfigDir } from './config/paths.js';
 import { GitHubClient } from './clients/github-client.js';
 import { JiraClient } from './clients/jira-client.js';
+import {
+  resolveGitHubAuth,
+  resolveJiraAuth,
+  getAuthStatuses,
+  AuthExpiredError,
+} from './auth/auth-provider.js';
 import { discoverGitHubTeam } from './discovery/github-discovery.js';
 import { discoverJiraTeam } from './discovery/jira-discovery.js';
 import {
@@ -78,6 +84,33 @@ const server = new Server(
     instructions: SERVER_INSTRUCTIONS,
   }
 );
+
+// ─── Auth Helpers ────────────────────────────────────────────
+
+/**
+ * Create a GitHubClient using the auth provider (env > oauth > pat).
+ * Throws a helpful error if no credentials are found.
+ */
+async function createGitHubClient(): Promise<GitHubClient> {
+  const auth = await resolveGitHubAuth();
+  if (!auth) {
+    throw new Error('GitHub credentials required. Set GITHUB_TOKEN or run "prodbeam auth login".');
+  }
+  return new GitHubClient(auth.token);
+}
+
+/**
+ * Create a JiraClient using the auth provider (env > oauth > pat).
+ * Returns null if no credentials found (Jira is optional).
+ */
+async function createJiraClient(): Promise<JiraClient | null> {
+  const auth = await resolveJiraAuth();
+  if (!auth) return null;
+  return new JiraClient({
+    getBaseUrl: () => auth.baseUrl,
+    getAuthHeader: () => Promise.resolve(auth.authHeader),
+  });
+}
 
 // ─── Tool Definitions ────────────────────────────────────────
 
@@ -360,6 +393,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
+    if (error instanceof AuthExpiredError) {
+      return {
+        content: [{ type: 'text' as const, text: `Authentication expired: ${error.message}` }],
+        isError: true,
+      };
+    }
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return {
       content: [{ type: 'text' as const, text: `Error: ${errorMessage}` }],
@@ -399,12 +438,11 @@ async function handleSetupTeam(
   parts.push('');
 
   // GitHub discovery
-  const ghCreds = resolveGitHubCredentials();
-  if (ghCreds) {
+  const ghClient = await createGitHubClient().catch(() => null);
+  if (ghClient) {
     parts.push('## GitHub Discovery');
     parts.push('');
 
-    const ghClient = new GitHubClient(ghCreds.token);
     const ghResult = await discoverGitHubTeam(ghClient, emailList);
 
     for (const member of ghResult.members) {
@@ -437,19 +475,23 @@ async function handleSetupTeam(
     parts.push('## GitHub Discovery');
     parts.push('');
     parts.push(
-      '⚠️ No GitHub credentials found. Set `GITHUB_TOKEN` env var or run setup again after configuring credentials.'
+      '⚠️ No GitHub credentials found. Set `GITHUB_TOKEN` env var or run `prodbeam auth login`.'
     );
     parts.push('');
   }
 
   // Jira discovery
-  const jiraCreds = resolveJiraCredentials();
-  if (jiraCreds) {
+  const setupJiraClient = await createJiraClient().catch(() => null);
+  const setupJiraAuth = setupJiraClient ? await resolveJiraAuth().catch(() => null) : null;
+  if (setupJiraClient) {
     parts.push('## Jira Discovery');
     parts.push('');
 
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    const jiraResult = await discoverJiraTeam(jiraClient, emailList, jiraCreds.host);
+    const jiraResult = await discoverJiraTeam(
+      setupJiraClient,
+      emailList,
+      setupJiraAuth?.baseUrl ?? ''
+    );
 
     config.jira.host = jiraResult.host;
 
@@ -489,9 +531,7 @@ async function handleSetupTeam(
   } else {
     parts.push('## Jira Discovery');
     parts.push('');
-    parts.push(
-      '⚠️ No Jira credentials found. Set `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` env vars or configure credentials.'
-    );
+    parts.push('⚠️ No Jira credentials found. Set Jira env vars or run `prodbeam auth login`.');
     parts.push('');
   }
 
@@ -536,17 +576,16 @@ async function handleAddMember(
   parts.push('');
 
   // GitHub discovery
-  const ghCreds = resolveGitHubCredentials();
-  if (ghCreds) {
-    const ghClient = new GitHubClient(ghCreds.token);
-    const username = await ghClient.searchUserByEmail(email);
+  const addGhClient = await createGitHubClient().catch(() => null);
+  if (addGhClient) {
+    const username = await addGhClient.searchUserByEmail(email);
     if (username) {
       newMember.github = username;
       newMember.name = username;
       parts.push(`GitHub: @${username}`);
 
       // Discover new repos
-      const repos = await ghClient.getRecentRepos(username).catch(() => [] as string[]);
+      const repos = await addGhClient.getRecentRepos(username).catch(() => [] as string[]);
       const newRepos = repos.filter((r) => !config.github.repos.includes(r));
       if (newRepos.length > 0) {
         config.github.repos.push(...newRepos);
@@ -558,10 +597,9 @@ async function handleAddMember(
   }
 
   // Jira discovery
-  const jiraCreds = resolveJiraCredentials();
-  if (jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    const user = await jiraClient.searchUserByEmail(email);
+  const addJiraClient = await createJiraClient().catch(() => null);
+  if (addJiraClient) {
+    const user = await addJiraClient.searchUserByEmail(email);
     if (user) {
       newMember.jiraAccountId = user.accountId;
       if (!newMember.name) {
@@ -639,10 +677,9 @@ async function handleRefreshConfig(): Promise<{
   const emails = config.team.members.map((m) => m.email);
 
   // Re-run GitHub discovery
-  const ghCreds = resolveGitHubCredentials();
-  if (ghCreds) {
-    const ghClient = new GitHubClient(ghCreds.token);
-    const ghResult = await discoverGitHubTeam(ghClient, emails);
+  const refreshGhClient = await createGitHubClient().catch(() => null);
+  if (refreshGhClient) {
+    const ghResult = await discoverGitHubTeam(refreshGhClient, emails);
 
     // Update member GitHub usernames
     for (const member of ghResult.members) {
@@ -668,10 +705,14 @@ async function handleRefreshConfig(): Promise<{
   }
 
   // Re-run Jira discovery
-  const jiraCreds = resolveJiraCredentials();
-  if (jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    const jiraResult = await discoverJiraTeam(jiraClient, emails, jiraCreds.host);
+  const refreshJiraClient = await createJiraClient().catch(() => null);
+  const refreshJiraAuth = refreshJiraClient ? await resolveJiraAuth().catch(() => null) : null;
+  if (refreshJiraClient) {
+    const jiraResult = await discoverJiraTeam(
+      refreshJiraClient,
+      emails,
+      refreshJiraAuth?.baseUrl ?? ''
+    );
 
     // Update member Jira accounts
     for (const member of jiraResult.members) {
@@ -718,15 +759,9 @@ async function handleStandup(
   }
 
   const timeRange = dailyTimeRange();
-  const ghCreds = resolveGitHubCredentials();
-
-  if (!ghCreds) {
-    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
-  }
-
-  const ghClient = new GitHubClient(ghCreds.token);
+  const standupGhClient = await createGitHubClient();
   const github = await fetchGitHubActivityForUser(
-    ghClient,
+    standupGhClient,
     member.github,
     config.github.repos,
     timeRange
@@ -734,11 +769,10 @@ async function handleStandup(
 
   // Jira (optional)
   let jira;
-  const jiraCreds = resolveJiraCredentials();
-  if (jiraCreds && member.jiraAccountId) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
+  const standupJiraClient = await createJiraClient().catch(() => null);
+  if (standupJiraClient && member.jiraAccountId) {
     jira = await fetchJiraActivityForUser(
-      jiraClient,
+      standupJiraClient,
       member.jiraAccountId,
       config.jira.projects,
       timeRange
@@ -755,18 +789,9 @@ async function handleTeamStandup(): Promise<{
   content: Array<{ type: 'text'; text: string }>;
 }> {
   const config = requireTeamConfig();
-  const ghCreds = resolveGitHubCredentials();
-
-  if (!ghCreds) {
-    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
-  }
-
   const timeRange = dailyTimeRange();
-  const ghClient = new GitHubClient(ghCreds.token);
-  const jiraCreds = resolveJiraCredentials();
-  const jiraClient = jiraCreds
-    ? new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken)
-    : null;
+  const teamGhClient = await createGitHubClient();
+  const teamJiraClient = await createJiraClient().catch(() => null);
 
   // Get GitHub usernames for all members
   const membersWithGH = config.team.members.filter((m) => m.github);
@@ -774,7 +799,7 @@ async function handleTeamStandup(): Promise<{
 
   // Fetch all GitHub activity at once, split by member
   const ghActivities = await fetchTeamGitHubActivity(
-    ghClient,
+    teamGhClient,
     usernames,
     config.github.repos,
     timeRange
@@ -791,9 +816,9 @@ async function handleTeamStandup(): Promise<{
     const github = ghActivities[i]!;
 
     let jira;
-    if (jiraClient && member.jiraAccountId) {
+    if (teamJiraClient && member.jiraAccountId) {
       jira = await fetchJiraActivityForUser(
-        jiraClient,
+        teamJiraClient,
         member.jiraAccountId,
         config.jira.projects,
         timeRange
@@ -813,22 +838,16 @@ async function handleWeeklySummary(
   args: Record<string, unknown> | undefined
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const config = requireTeamConfig();
-  const ghCreds = resolveGitHubCredentials();
-
-  if (!ghCreds) {
-    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
-  }
-
   const weeksAgo = typeof args?.['weeksAgo'] === 'number' ? args['weeksAgo'] : 0;
   const timeRange = weeklyTimeRange(weeksAgo);
-  const ghClient = new GitHubClient(ghCreds.token);
+  const weeklyGhClient = await createGitHubClient();
 
   // Aggregate all team members' activity into one GitHubActivity
   const membersWithGH = config.team.members.filter((m) => m.github);
   const usernames = membersWithGH.map((m) => m.github!);
 
   const perMember = await fetchTeamGitHubActivity(
-    ghClient,
+    weeklyGhClient,
     usernames,
     config.github.repos,
     timeRange
@@ -839,10 +858,9 @@ async function handleWeeklySummary(
 
   // Jira (optional)
   let jira;
-  const jiraCreds = resolveJiraCredentials();
-  if (jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    jira = await fetchTeamJiraActivity(jiraClient, config.jira.projects, timeRange);
+  const weeklyJiraClient = await createJiraClient().catch(() => null);
+  if (weeklyJiraClient) {
+    jira = await fetchTeamJiraActivity(weeklyJiraClient, config.jira.projects, timeRange);
   }
 
   // Intelligence: snapshot, trends, anomalies, health
@@ -891,21 +909,16 @@ async function handleSprintRetro(
   args: Record<string, unknown> | undefined
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const config = requireTeamConfig();
-  const ghCreds = resolveGitHubCredentials();
-  const jiraCreds = resolveJiraCredentials();
-
-  if (!ghCreds) {
-    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
-  }
+  const retroGhClient = await createGitHubClient();
+  const retroJiraClient = await createJiraClient().catch(() => null);
 
   let sprintName = typeof args?.['sprintName'] === 'string' ? args['sprintName'] : undefined;
   let timeRange;
   let sprintGoal: string | undefined;
 
   // Detect sprint from Jira if not provided
-  if (!sprintName && jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
+  if (!sprintName && retroJiraClient) {
+    const activeSprint = await detectActiveSprint(retroJiraClient, config.jira.projects);
     if (activeSprint) {
       sprintName = activeSprint.name;
       sprintGoal = activeSprint.goal;
@@ -927,13 +940,12 @@ async function handleSprintRetro(
     timeRange = { from: from.toISOString(), to: timeRange.to };
   }
 
-  const ghClient = new GitHubClient(ghCreds.token);
-  const membersWithGH = config.team.members.filter((m) => m.github);
-  const usernames = membersWithGH.map((m) => m.github!);
+  const retroMembersWithGH = config.team.members.filter((m) => m.github);
+  const retroUsernames = retroMembersWithGH.map((m) => m.github!);
 
   const perMember = await fetchTeamGitHubActivity(
-    ghClient,
-    usernames,
+    retroGhClient,
+    retroUsernames,
     config.github.repos,
     timeRange
   );
@@ -942,9 +954,8 @@ async function handleSprintRetro(
 
   // Jira sprint data
   let jira;
-  if (jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    jira = await fetchSprintJiraActivity(jiraClient, sprintName, timeRange);
+  if (retroJiraClient) {
+    jira = await fetchSprintJiraActivity(retroJiraClient, sprintName, timeRange);
   }
 
   const dateRange = {
@@ -1002,12 +1013,8 @@ async function handleSprintReview(
   args: Record<string, unknown> | undefined
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const config = requireTeamConfig();
-  const ghCreds = resolveGitHubCredentials();
-  const jiraCreds = resolveJiraCredentials();
-
-  if (!ghCreds) {
-    throw new Error('GitHub credentials required. Set GITHUB_TOKEN env var.');
-  }
+  const reviewGhClient = await createGitHubClient();
+  const reviewJiraClient = await createJiraClient().catch(() => null);
 
   let sprintName = typeof args?.['sprintName'] === 'string' ? args['sprintName'] : undefined;
   let timeRange;
@@ -1016,9 +1023,8 @@ async function handleSprintReview(
   let sprintEndDate: string | undefined;
 
   // Detect sprint from Jira if not provided
-  if (!sprintName && jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    const activeSprint = await detectActiveSprint(jiraClient, config.jira.projects);
+  if (!sprintName && reviewJiraClient) {
+    const activeSprint = await detectActiveSprint(reviewJiraClient, config.jira.projects);
     if (activeSprint) {
       sprintName = activeSprint.name;
       sprintGoal = activeSprint.goal;
@@ -1040,13 +1046,12 @@ async function handleSprintReview(
     timeRange = { from: from.toISOString(), to: timeRange.to };
   }
 
-  const ghClient = new GitHubClient(ghCreds.token);
-  const membersWithGH = config.team.members.filter((m) => m.github);
-  const usernames = membersWithGH.map((m) => m.github!);
+  const reviewMembersWithGH = config.team.members.filter((m) => m.github);
+  const reviewUsernames = reviewMembersWithGH.map((m) => m.github!);
 
   const perMember = await fetchTeamGitHubActivity(
-    ghClient,
-    usernames,
+    reviewGhClient,
+    reviewUsernames,
     config.github.repos,
     timeRange
   );
@@ -1054,9 +1059,8 @@ async function handleSprintReview(
   const github = mergeGitHubActivities(perMember, config.team.name, timeRange);
 
   let jira;
-  if (jiraCreds) {
-    const jiraClient = new JiraClient(jiraCreds.host, jiraCreds.email, jiraCreds.apiToken);
-    jira = await fetchSprintJiraActivity(jiraClient, sprintName, timeRange);
+  if (reviewJiraClient) {
+    jira = await fetchSprintJiraActivity(reviewJiraClient, sprintName, timeRange);
   }
 
   const dateRange = {
@@ -1232,8 +1236,10 @@ function buildMemberSnapshots(
 function handleGetCapabilities(): { content: Array<{ type: 'text'; text: string }> } {
   const configExists = teamConfigExists();
   const config = configExists ? readTeamConfig() : null;
-  const ghCreds = resolveGitHubCredentials();
-  const jiraCreds = resolveJiraCredentials();
+  const authStatuses = getAuthStatuses();
+
+  const ghStatus = authStatuses.find((s) => s.service === 'github');
+  const jiraStatus = authStatuses.find((s) => s.service === 'jira');
 
   const parts: string[] = [];
   parts.push('# Prodbeam MCP v2');
@@ -1248,17 +1254,23 @@ function handleGetCapabilities(): { content: Array<{ type: 'text'; text: string 
   parts.push(
     `| Team config | ${configExists ? `✅ ${config?.team.name} (${config?.team.members.length} members)` : '❌ Not configured'} |`
   );
-  parts.push(`| GitHub credentials | ${ghCreds ? '✅ Token configured' : '❌ Not configured'} |`);
   parts.push(
-    `| Jira credentials | ${jiraCreds ? `✅ ${jiraCreds.host}` : '❌ Not configured (optional)'} |`
+    `| GitHub | ${ghStatus?.valid ? `✅ ${ghStatus.method === 'oauth' ? 'OAuth (auto-refresh)' : 'Token configured'}` : `❌ ${ghStatus?.error ?? 'Not configured'}`} |`
+  );
+  parts.push(
+    `| Jira | ${jiraStatus?.valid ? `✅ ${jiraStatus.method === 'oauth' ? 'OAuth (auto-refresh)' : 'Token configured'}` : `❌ ${jiraStatus?.error ?? 'Not configured (optional)'}`} |`
   );
   parts.push('');
 
   // Setup guidance when things are missing
-  if (!ghCreds || !configExists) {
+  if (!ghStatus?.valid || !configExists) {
     parts.push('## Getting Started');
     parts.push('');
-    renderSetupGuide(parts, { ghCreds: !!ghCreds, jiraCreds: !!jiraCreds, configExists });
+    renderSetupGuide(parts, {
+      ghCreds: !!ghStatus?.valid,
+      jiraCreds: !!jiraStatus?.valid,
+      configExists,
+    });
   }
 
   if (config) {

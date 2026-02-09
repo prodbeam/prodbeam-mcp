@@ -32,15 +32,33 @@ export class JiraClientError extends Error {
   }
 }
 
-export class JiraClient {
-  private baseUrl: string;
-  private authHeader: string;
+/** Interface for OAuth-based Jira authentication. */
+export interface JiraAuthProvider {
+  getBaseUrl(): string;
+  getAuthHeader(): Promise<string>;
+}
 
-  constructor(host: string, email: string, apiToken: string) {
-    // Normalize host: ensure https:// prefix, remove trailing slash
-    this.baseUrl = host.startsWith('https://') ? host : `https://${host}`;
-    this.baseUrl = this.baseUrl.replace(/\/$/, '');
-    this.authHeader = `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`;
+export class JiraClient {
+  private getBaseUrl: () => string;
+  private getAuthHeader: () => Promise<string>;
+
+  constructor(host: string, email: string, apiToken: string);
+  constructor(authProvider: JiraAuthProvider);
+  constructor(hostOrProvider: string | JiraAuthProvider, email?: string, apiToken?: string) {
+    if (typeof hostOrProvider === 'string') {
+      // PAT-based auth (existing behavior)
+      let baseUrl = hostOrProvider.startsWith('https://')
+        ? hostOrProvider
+        : `https://${hostOrProvider}`;
+      baseUrl = baseUrl.replace(/\/$/, '');
+      const authHeader = `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`;
+      this.getBaseUrl = () => baseUrl;
+      this.getAuthHeader = () => Promise.resolve(authHeader);
+    } else {
+      // OAuth-based auth
+      this.getBaseUrl = () => hostOrProvider.getBaseUrl();
+      this.getAuthHeader = () => hostOrProvider.getAuthHeader();
+    }
   }
 
   // ─── Authentication ─────────────────────────────────────
@@ -176,7 +194,7 @@ export class JiraClient {
       assignee: issue.fields.assignee?.displayName ?? 'Unassigned',
       issueType: issue.fields.issuetype.name,
       updatedAt: issue.fields.updated,
-      url: `${this.baseUrl}/browse/${issue.key}`,
+      url: `${this.getBaseUrl()}/browse/${issue.key}`,
       description: desc || undefined,
       labels: issue.fields.labels?.length ? issue.fields.labels : undefined,
       createdAt: issue.fields.created,
@@ -194,13 +212,15 @@ export class JiraClient {
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const baseUrl = this.getBaseUrl();
+    const url = `${baseUrl}${path}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    const authHeader = await this.getAuthHeader();
 
     try {
       const headers: Record<string, string> = {
-        Authorization: this.authHeader,
+        Authorization: authHeader,
         Accept: 'application/json',
       };
 

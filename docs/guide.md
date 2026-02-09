@@ -28,9 +28,10 @@ Install from npm and set up in two commands.
 npm install -g @prodbeam/mcp
 ```
 
-This provides two commands:
+This provides three commands:
 - `prodbeam` — CLI for reports and setup
 - `prodbeam-mcp` — MCP server entry point
+- `mcp` — Short alias for `prodbeam-mcp`
 
 ### 2. Run the setup wizard
 
@@ -147,9 +148,30 @@ claude mcp add prodbeam \
 
 ## Credentials
 
-There are two ways to provide credentials. You can use either or both — environment variables take precedence.
+There are three ways to authenticate. Environment variables always take precedence.
 
-### Option A: Environment variables (recommended)
+### Option A: OAuth (recommended)
+
+Authenticate via browser — tokens refresh automatically and don't require manual rotation.
+
+```bash
+prodbeam auth login
+```
+
+This walks you through OAuth for both GitHub and Jira:
+- **GitHub:** Device flow — enter a code in your browser, CLI polls for the token
+- **Jira:** Authorization code flow — click a link, authorize in browser, CLI receives the callback
+
+OAuth tokens are stored in `~/.prodbeam/credentials.json` with `600` permissions. Access tokens refresh automatically (GitHub: 8h, Jira: 1h). Refresh tokens last months (GitHub: ~6mo, Jira: 90 days of inactivity).
+
+```bash
+prodbeam auth status                    # Check token expiry
+prodbeam auth logout                    # Remove OAuth tokens
+prodbeam auth login --github            # Re-authenticate GitHub only
+prodbeam auth login --jira              # Re-authenticate Jira only
+```
+
+### Option B: Environment variables
 
 Set these in your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
 
@@ -160,18 +182,25 @@ export JIRA_EMAIL=you@company.com
 export JIRA_API_TOKEN=your_jira_token
 ```
 
-When `prodbeam init` detects these, it uses them directly and does not write them to disk.
+When environment variables are set, they always take precedence over OAuth or saved tokens.
 
-### Option B: Credentials file
+### Option C: Personal access tokens
 
-If you don't set environment variables, `prodbeam init` prompts you interactively and saves tokens to `~/.prodbeam/credentials.json` with `600` permissions (owner read/write only).
+If you prefer not to use OAuth, you can paste tokens directly:
+
+```bash
+prodbeam auth login --method token
+```
+
+Or use `prodbeam init` — the wizard prompts for tokens interactively and saves them to `~/.prodbeam/credentials.json`.
 
 ### Resolution order
 
 1. Environment variables (`GITHUB_TOKEN`, `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN`)
-2. `~/.prodbeam/credentials.json`
+2. OAuth tokens in `~/.prodbeam/credentials.json` (auto-refreshed)
+3. Personal access tokens in `~/.prodbeam/credentials.json`
 
-Environment variables always take precedence. See [SECURITY.md](../SECURITY.md) for details on credential handling and token scopes.
+See [SECURITY.md](../SECURITY.md) for details on credential handling and token scopes.
 
 ---
 
@@ -189,19 +218,30 @@ Ask naturally in any MCP client — the client invokes the right tool:
 | "Generate a weekly summary for last week" | `weekly_summary` (weeksAgo: 1) |
 | "Generate a sprint retro" | `sprint_retro` (auto-detects active sprint) |
 | "Generate a sprint retro for Sprint 12" | `sprint_retro` (sprintName: "Sprint 12") |
+| "Show sprint progress" | `sprint_review` (auto-detects active sprint) |
 
 ### Via CLI
 
 ```bash
-prodbeam status                           # Check config and credentials
+# Authentication
+prodbeam auth login                       # Authenticate (OAuth or token)
+prodbeam auth status                      # Check token expiry
+prodbeam auth logout                      # Remove OAuth tokens
+
+# Reports
 prodbeam standup                          # Personal standup (last 24h)
 prodbeam standup --email alice@co.com     # Standup for a specific member
 prodbeam team-standup                     # Full team standup
-prodbeam weekly                           # Weekly summary
+prodbeam weekly                           # Weekly summary (current week)
 prodbeam weekly --weeks-ago 1             # Last week's summary
 prodbeam sprint-retro                     # Sprint retro (auto-detect sprint)
 prodbeam sprint-retro --sprint "Sprint 12"  # Specific sprint
+prodbeam sprint-review                    # Mid-sprint health check
+
+# Info
+prodbeam status                           # Check config and credentials
 prodbeam help                             # All commands
+prodbeam help weekly                      # Detailed help for a command
 ```
 
 Local development (replace `prodbeam` with `node dist/cli.js`):
@@ -235,13 +275,15 @@ You can run `prodbeam init` again at any time. If `~/.prodbeam/team.json` alread
 
 | Issue | Solution |
 |-------|----------|
-| `GitHub credentials required` | Run `prodbeam init` or set `GITHUB_TOKEN` in your shell |
+| `GitHub credentials required` | Run `prodbeam auth login`, `prodbeam init`, or set `GITHUB_TOKEN` in your shell |
 | `No team config found` | Run `prodbeam init` or create `~/.prodbeam/team.json` manually (see below) |
 | MCP server not appearing in `/mcp` | Run `prodbeam init` to re-register, or `claude mcp add` manually. Start a **new** session |
 | `No GitHub username for email` | GitHub email may be private. Edit `~/.prodbeam/team.json` to set `github` field manually |
 | Empty report | Verify the time range has activity. Try `standup` first (smallest window) |
-| Jira not working | All three fields required: host, email, API token. Run `prodbeam init` to reconfigure |
+| Jira not working | Run `prodbeam auth login --jira` for OAuth, or ensure all three PAT fields are set: host, email, API token |
 | MCP server won't reconnect | Remove and re-add: `claude mcp remove prodbeam && prodbeam init`. Start a **new** session |
+| OAuth callback not working | Run `prodbeam auth login` first — the CLI must be running to receive the browser callback |
+| `Authentication expired` | Refresh token has expired. Run `prodbeam auth login` to re-authenticate |
 | npx uses stale version | Clear cache: `npx clear-npx-cache` or `npm cache clean --force`, then retry |
 
 ### Known Limitations

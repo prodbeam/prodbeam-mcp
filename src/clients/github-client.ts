@@ -31,10 +31,15 @@ export class GitHubClientError extends Error {
 }
 
 export class GitHubClient {
-  private token: string;
+  private getToken: () => Promise<string>;
 
-  constructor(token: string) {
-    this.token = token;
+  constructor(tokenOrProvider: string | (() => Promise<string>)) {
+    if (typeof tokenOrProvider === 'string') {
+      const token = tokenOrProvider;
+      this.getToken = () => Promise.resolve(token);
+    } else {
+      this.getToken = tokenOrProvider;
+    }
   }
 
   // ─── Authentication ─────────────────────────────────────
@@ -187,11 +192,12 @@ export class GitHubClient {
     const url = `${GITHUB_API}${path}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    const token = await this.getToken();
 
     try {
       const response = await fetch(url, {
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
         },

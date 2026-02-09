@@ -518,3 +518,105 @@ prodbeam sprint-retro --sprint "Sprint 12"
 ```
 
 </details>
+
+---
+
+### `sprint_review`
+
+Mid-sprint health check with progress, deliverables, risks, blockers, and per-developer status. Use this during a sprint to understand how things are tracking.
+
+**Parameters:**
+
+| Name | Required | Type | Description |
+|------|----------|------|-------------|
+| `sprintName` | No | string | Sprint name (e.g., "Sprint 12"). Auto-detects active sprint if omitted |
+
+**MCP prompt:**
+```
+Show sprint progress using prodbeam
+```
+
+For a specific sprint:
+```
+Show prodbeam sprint review for "Sprint 12"
+```
+
+**CLI equivalent:**
+```bash
+prodbeam sprint-review
+prodbeam sprint-review --sprint "Sprint 12"
+```
+
+<details>
+<summary>Sample output</summary>
+
+```markdown
+# Sprint Review: Sprint 12
+
+**Period:** 2026-01-27 to 2026-02-07
+**Sprint Progress:** Day 8 of 14 (57%)
+
+## Sprint Goal
+
+> Deliver webhook reliability improvements and API rate limiting
+
+## Progress Summary
+
+| Metric | Value |
+|--------|-------|
+| Days Elapsed | 8 of 14 |
+| Issues Completed | 5 of 11 (45%) |
+| Issues In Progress | 4 |
+| Issues Not Started | 2 |
+| PRs Merged | 6 |
+| PRs Awaiting Review | 2 |
+
+## Key Deliverables
+
+- ENG-431: Webhook retry failures → PR #142 (merged)
+- ENG-428: API rate limiting → PR #137 (merged)
+- ENG-435: Redis connection pooling → PR #139 (merged)
+
+## In Progress
+
+- ENG-445: Upgrade ESLint to v9 → PR #89 (open 3 days)
+- ENG-440: Redis connection pool tuning → PR #143 (open 1 day)
+- ENG-450: Add monitoring dashboard
+- ENG-452: Update deployment runbook
+
+## Risks & Blockers
+
+- [!] 1 PR open for extended period — may not merge before sprint end
+- [!] 6 days remaining with 6 incomplete items
+- [!] 1 high-priority issue stalled
+
+## Developer Progress
+
+### alice
+- Completed: 3 PRs merged
+- In Progress: 1 PRs open
+- Reviews Given: 4
+
+### bob
+- Completed: 2 PRs merged
+- In Progress: 1 PRs open
+- Reviews Given: 6
+
+### carol
+- Completed: 1 PRs merged
+- In Progress: 0 PRs open
+- Reviews Given: 2
+
+## Delivery Metrics
+
+| Metric | Value |
+|--------|-------|
+| Commits | 18 |
+| Pull Requests | 8 (6 merged, 2 open) |
+| Code Changes | +1,547/-623 |
+| Reviews | 12 (10 approved, 2 changes requested) |
+
+---
+```
+
+</details>

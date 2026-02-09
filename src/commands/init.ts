@@ -29,6 +29,23 @@ import { JiraClient, JiraClientError } from '../clients/jira-client.js';
 import { discoverJiraTeam } from '../discovery/jira-discovery.js';
 import type { GitHubCredentials, JiraCredentials, TeamConfig } from '../config/types.js';
 import {
+  GITHUB_CLIENT_ID,
+  GITHUB_SCOPES,
+  JIRA_CLIENT_ID,
+  JIRA_CLIENT_SECRET,
+  JIRA_SCOPES,
+  JIRA_CALLBACK_PORT,
+  JIRA_REDIRECT_URI,
+} from '../auth/app-config.js';
+import { requestDeviceCode, pollForToken } from '../auth/github-device-flow.js';
+import {
+  buildAuthorizationUrl,
+  generateState,
+  waitForAuthCode,
+  completeJiraOAuthFlow,
+} from '../auth/jira-oauth-flow.js';
+import { writeGitHubOAuthTokens, writeJiraOAuthTokens } from '../auth/token-store.js';
+import {
   createPrompt,
   ask,
   askSecret,
@@ -252,8 +269,41 @@ async function resolveOrPromptGitHub(rl: Interface): Promise<ResolvedCreds<GitHu
     return { creds: { token: mcpToken }, source: 'file' };
   }
 
-  // 4. Prompt
-  printInfo('No GitHub token found. Create one at https://github.com/settings/tokens');
+  // 4. Prompt — offer OAuth or PAT
+  printInfo('No GitHub token found.');
+  const choice = await ask(
+    rl,
+    'How would you like to authenticate?\n  [1] Browser login (OAuth, recommended)\n  [2] Paste a personal access token\n  Choice',
+    {
+      required: true,
+      validate: (v) => (v === '1' || v === '2' ? null : 'Enter 1 or 2'),
+    }
+  );
+
+  if (choice === '1') {
+    // GitHub device flow
+    printInfo('Starting GitHub device flow...');
+    const deviceCode = await requestDeviceCode(GITHUB_CLIENT_ID, GITHUB_SCOPES);
+    console.log('');
+    console.log(`  Enter this code in your browser: \x1b[1m${deviceCode.userCode}\x1b[0m`);
+    console.log(`  Open: ${deviceCode.verificationUri}`);
+    console.log('');
+    printInfo('Waiting for authorization...');
+
+    const tokens = await pollForToken(
+      GITHUB_CLIENT_ID,
+      deviceCode.deviceCode,
+      deviceCode.interval,
+      deviceCode.expiresIn
+    );
+
+    writeGitHubOAuthTokens(tokens);
+    printSuccess('GitHub OAuth tokens saved.');
+    // Return the access token as a GitHubCredentials for use in the rest of init
+    return { creds: { token: tokens.accessToken }, source: 'prompt' };
+  }
+
+  printInfo('Create a token at https://github.com/settings/tokens');
   printInfo('Required scopes: repo, read:org, read:user');
   const token = await askSecret(rl, 'GitHub personal access token');
 
@@ -293,8 +343,48 @@ async function resolveOrPromptJira(rl: Interface): Promise<ResolvedCreds<JiraCre
     return { creds: { host: mcpHost, email: mcpEmail, apiToken: mcpToken }, source: 'file' };
   }
 
-  // 4. Prompt
+  // 4. Prompt — offer OAuth or PAT
   printInfo('No Jira credentials found.');
+  const choice = await ask(
+    rl,
+    'How would you like to authenticate?\n  [1] Browser login (OAuth)\n  [2] Paste an API token (recommended)\n  Choice',
+    {
+      required: true,
+      validate: (v) => (v === '1' || v === '2' ? null : 'Enter 1 or 2'),
+    }
+  );
+
+  if (choice === '1') {
+    // Jira OAuth 3LO flow
+    printInfo('Starting Jira OAuth flow...');
+    const state = generateState();
+    const authUrl = buildAuthorizationUrl(JIRA_CLIENT_ID, JIRA_REDIRECT_URI, state, JIRA_SCOPES);
+    console.log('');
+    console.log(`  Open this URL in your browser:`);
+    console.log(`  ${authUrl}`);
+    console.log('');
+    printInfo('Waiting for authorization...');
+
+    const code = await waitForAuthCode(JIRA_CALLBACK_PORT, state);
+
+    const tokens = await completeJiraOAuthFlow(
+      JIRA_CLIENT_ID,
+      JIRA_CLIENT_SECRET,
+      code,
+      JIRA_REDIRECT_URI,
+      JIRA_SCOPES
+    );
+
+    writeJiraOAuthTokens(tokens);
+    printSuccess('Jira OAuth tokens saved.');
+
+    // Build a JiraCredentials-compatible object using the OAuth cloud URL
+    return {
+      creds: { host: tokens.cloudUrl, email: 'oauth', apiToken: tokens.accessToken },
+      source: 'prompt',
+    };
+  }
+
   printInfo('Create an API token at https://id.atlassian.com/manage-profile/security/api-tokens');
 
   const host = await ask(rl, 'Jira Cloud hostname (e.g., company.atlassian.net)', {

@@ -152,3 +152,21 @@ export function hasGitHubCredentials(): boolean {
 export function hasJiraCredentials(): boolean {
   return resolveJiraCredentials() !== null;
 }
+
+// ─── Source Detection ───────────────────────────────────────
+
+/**
+ * Check if GitHub credentials come from environment variables.
+ * Useful to skip OAuth refresh when env vars are the source.
+ */
+export function isGitHubFromEnv(): boolean {
+  return !!process.env['GITHUB_TOKEN'];
+}
+
+/**
+ * Check if Jira credentials come from environment variables.
+ * Useful to skip OAuth refresh when env vars are the source.
+ */
+export function isJiraFromEnv(): boolean {
+  return !!(process.env['JIRA_API_TOKEN'] && process.env['JIRA_EMAIL'] && process.env['JIRA_HOST']);
+}

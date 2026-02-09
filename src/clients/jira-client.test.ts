@@ -23,30 +23,30 @@ describe('JiraClient', () => {
   });
 
   describe('constructor', () => {
-    it('normalizes host without https prefix', () => {
+    it('normalizes host without https prefix', async () => {
       const c = new JiraClient('example.atlassian.net', 'a@b.com', 'tok');
       // Verify by calling a method and checking the URL
       mockFetch.mockResolvedValue(jsonResponse([]));
-      void c.getProjects();
+      await c.getProjects();
       expect(mockFetch).toHaveBeenCalledWith(
         'https://example.atlassian.net/rest/api/3/project',
         expect.anything()
       );
     });
 
-    it('handles host with https prefix', () => {
+    it('handles host with https prefix', async () => {
       const c = new JiraClient('https://example.atlassian.net', 'a@b.com', 'tok');
       mockFetch.mockResolvedValue(jsonResponse([]));
-      void c.getProjects();
+      await c.getProjects();
       expect(mockFetch).toHaveBeenCalledWith(
         'https://example.atlassian.net/rest/api/3/project',
         expect.anything()
       );
     });
 
-    it('sends basic auth header', () => {
+    it('sends basic auth header', async () => {
       mockFetch.mockResolvedValue(jsonResponse([]));
-      void client.getProjects();
+      await client.getProjects();
 
       const expectedAuth = `Basic ${Buffer.from('user@test.com:api-token').toString('base64')}`;
       expect(mockFetch).toHaveBeenCalledWith(

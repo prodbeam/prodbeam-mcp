@@ -33,8 +33,9 @@ Or use the setup wizard: `node dist/cli.js init`
 src/
 ├── index.ts              # MCP server entry point (stdio)
 ├── cli.ts                # Standalone CLI entry point
+├── auth/                 # OAuth flows (GitHub device, Jira 3LO), token storage, auth provider
 ├── clients/              # GitHub and Jira REST API clients
-├── commands/             # CLI commands (init wizard)
+├── commands/             # CLI commands (init wizard, auth login/status/logout)
 ├── config/               # Credentials, team config, path resolution
 ├── discovery/            # GitHub/Jira auto-discovery from emails
 ├── generators/           # Report generation and metrics calculation
